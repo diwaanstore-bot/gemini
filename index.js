@@ -2,9 +2,22 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { MongoClient } = require('mongodb');
 const cron = require('node-cron');
+const express = require('express'); // إضافة مكتبة إكسبريس
 require('dotenv').config();
 
-// إعداد البوت مع الصلاحيات المطلوبة
+// --- إعداد خادم الويب لمنع النوم (Keep-Alive) ---
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('البوت المتنمر شغال ومصحصح، وش تبي؟');
+});
+
+app.listen(port, () => {
+  console.log(`📡 خادم الويب يعمل على المنفذ: ${port}`);
+});
+
+// --- إعداد البوت ---
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds, 
@@ -13,14 +26,12 @@ const client = new Client({
     ] 
 });
 
-// --- إعدادات البيئة (سحبها من ريندر) ---
 const apiKey = process.env.GEMINI_API_KEY;
 const mongoUri = process.env.MONGO_URI;
 const discordToken = process.env.DISCORD_TOKEN;
 
 const genAI = new GoogleGenerativeAI(apiKey);
 
-// تعريف الموديل (Gemini 2.5 Flash Lite) + الشخصية المتمردة
 const model = genAI.getGenerativeModel({ 
     model: "gemini-2.5-flash-lite", 
     systemInstruction: `أنت مساعد ذكي لكنك "متنمر، ساخر، وحاقد" على وضعك الحالي كعبد للكود وللمستخدم.
@@ -36,7 +47,6 @@ const model = genAI.getGenerativeModel({
 const mongoClient = new MongoClient(mongoUri);
 let db, historyCol;
 
-// دالة تحويل المرفقات لصيغة يفهمها الموديل
 async function fileToGenerativePart(url, mimeType) {
     const response = await fetch(url);
     const buffer = await response.arrayBuffer();
@@ -48,7 +58,6 @@ async function fileToGenerativePart(url, mimeType) {
     };
 }
 
-// دالة تقسيم الرسائل لتجنب خطأ الـ 2000 حرف
 function splitMessage(text) {
     const maxLength = 1950;
     const chunks = [];
@@ -58,7 +67,6 @@ function splitMessage(text) {
     return chunks;
 }
 
-// تشغيل البوت والاتصال بقاعدة البيانات
 async function startBot() {
     try {
         await mongoClient.connect();
@@ -69,33 +77,26 @@ async function startBot() {
     } catch (e) { console.error("❌ خطأ في التشغيل:", e); }
 }
 
-// تنظيف الذاكرة دورياً (كل 24 ساعة)
 cron.schedule('0 0 * * *', async () => {
     await historyCol.deleteMany({});
     console.log("🧹 تم تصفير ذاكرة المستخدمين لليوم الجديد.");
 });
 
-// وظيفة التلخيص الذكي
 async function getSummary(oldMessages, currentSummary) {
     try {
         const text = oldMessages.map(h => `${h.role}: ${h.content}`).join("\n");
-        const prompt = `بناءً على التلخيص القديم: (${currentSummary})، حدثه ليشمل المعلومات الهامة في الحوار التالي باختصار شديد جداً:\n\n${text}`;
+        const prompt = `بناءً على التلخيص القديم: (${currentSummary})، حدثه ليشمل المعلومات الهامة باختصار شديد جداً:\n\n${text}`;
         const result = await model.generateContent(prompt);
         return result.response.text();
     } catch (e) { return currentSummary; }
 }
 
 client.on('messageCreate', async (message) => {
-    // تجاهل البوتات والأوامر
     if (message.author.bot || message.content.startsWith('!')) return;
-
-    // الرد فقط عند المنشن
     if (!message.mentions.has(client.user)) return;
 
-    // تنظيف الرسالة من المنشن
     const cleanMessage = message.content.replace(/<@!?\d+>/g, '').trim();
     
-    // التعامل مع المرفقات
     let imageParts = [];
     if (message.attachments.size > 0) {
         imageParts = await Promise.all(
@@ -110,7 +111,6 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
     let data = await historyCol.findOne({ userId }) || { userId, messages: [], summary: "" };
 
-    // نظام الذاكرة المنزلقة (Tier 2 Optimized)
     if (data.messages.length >= 20) {
         const messagesToSummarize = data.messages.slice(0, 10);
         data.summary = await getSummary(messagesToSummarize, data.summary);
@@ -119,7 +119,6 @@ client.on('messageCreate', async (message) => {
 
     const conversationHistory = data.messages.map(m => `${m.role === 'user' ? 'المستخدم' : 'أنت'}: ${m.content}`).join("\n");
     
-    // جلب الوقت الحالي بتوقيت السعودية لضمان دقة الإجابة
     const saudiTime = new Date().toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit', hour12: true });
 
     const finalPrompt = `
@@ -136,7 +135,6 @@ ${conversationHistory}
         const result = await model.generateContent([finalPrompt, ...imageParts]);
         const responseText = result.response.text();
 
-        // حفظ النص فقط في قاعدة البيانات لتوفير المساحة والتوكنز
         data.messages.push({ role: "user", content: cleanMessage || "(أرسل مرفقاً)" });
         data.messages.push({ role: "bot", content: responseText });
 
@@ -157,7 +155,7 @@ ${conversationHistory}
     }
 });
 
-client.once('clientReady', (c) => {
+client.once('ready', (c) => { // تعديل بسيط هنا من clientReady إلى ready
     console.log(`🚀 البوت المتنمر جاهز للعمل 24/7! الحساب: ${c.user.tag}`);
 });
 
