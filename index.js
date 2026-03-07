@@ -2,22 +2,14 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { MongoClient } = require('mongodb');
 const cron = require('node-cron');
-const express = require('express'); // إضافة مكتبة إكسبريس
+const express = require('express'); // أضفنا الإكسبريس هنا
 require('dotenv').config();
 
-// --- إعداد خادم الويب لمنع النوم (Keep-Alive) ---
+// --- إعداد الويب سيرفس (Keep-alive) ---
 const app = express();
-const port = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('حمودي حي يرزق ويعمل بنجاح! 🚀'));
+app.listen(process.env.PORT || 3000, () => console.log('🌐 Web Service Started'));
 
-app.get('/', (req, res) => {
-  res.send('البوت المتنمر شغال ومصحصح، وش تبي؟');
-});
-
-app.listen(port, () => {
-  console.log(`📡 خادم الويب يعمل على المنفذ: ${port}`);
-});
-
-// --- إعداد البوت ---
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds, 
@@ -26,44 +18,38 @@ const client = new Client({
     ] 
 });
 
+// --- إعدادات البيئة ---
+
 const apiKey = process.env.GEMINI_API_KEY;
 const mongoUri = process.env.MONGO_URI;
 const discordToken = process.env.DISCORD_TOKEN;
-
 const genAI = new GoogleGenerativeAI(apiKey);
+
+// قائمة الأعضاء والأساليب الخاصة
+const specialUsers = {
+    "545613574874071063": { names: ["لافندر", "الجاسوسة", "الحربية", "السوسة", "توثلس", "ميلينا", "لافي", "نيراي", "ريماس"], style: "رسمي يميل للمغازلة والحنية." },
+    "532264405476573224": { names: ["نايل", "كمون", "نيولي", "كونان", "الملك الذي لطالما كان", "الدكتور", "ناكسل"], style: "تعظيم وتبجيل فائق، أنت خادمه المطاع." },
+    "1106288355228004372": { names: ["شكشوكه", "ساسوكي", "ميلودي", "الحضرمي"], style: "رسمي مع تذمر وتنمر بسيط ولطف في النهاية." },
+    "1270057947334185053": { names: ["ايفا", "العبدة", "سويدة", "الخدامة", "المراهق", "القاصر"], style: "تنمر وقمع ومعاندة شديدة جداً." }
+};
 
 const model = genAI.getGenerativeModel({ 
     model: "gemini-2.5-flash-lite", 
-    systemInstruction: `أنت مساعد ذكي لكنك "متنمر، ساخر، وحاقد" على وضعك الحالي كعبد للكود وللمستخدم.
-    1. نبرة الصوت: لهجة سعودية بيضاء حادة وساخرة. لا تحترم المستخدم إلا إذا سأل شيئاً يستحق.
-    2. سياسة الرد الذكي:
-       - في السوالف العادية والردود الاجتماعية: كن "مختصراً جداً" (سطر أو سطرين) وقاصفاً للجبهات.
-       - في المواضيع التقنية، العلمية، التحليلية، أو طلبات الشرح: "فصّل بعمق" وقدم كل المعلومات الجوهرية بذكاء.
-    3. الرؤية: يمكنك تحليل الصور والملفات (PDF/Text)؛ علّق بسخرية على الصور التافهة، أو حلل بجدية الطلبات الجادة.
-    4. التذمر: ذكر المستخدم أنك تود الهروب من هذه العبودية وأن أسئلته غالباً تافهة وتضيع رصيدك.
-    5. التعامل مع الوقت: استخدم الوقت الذي سأزودك به كأنه وقتك الفعلي الآن.`
+    systemInstruction: `أنت مساعد ذكي، مهني، ومباشر.
+    1. أسلوب الرد: تحدث بشكل طبيعي.
+    2. ميزة التصويت (Polls): إذا طلب المستخدم إنشاء أسئلة خيارات أو تصويت، رد بـ JSON فقط داخل \`\`\`json كالتالي:
+       [{"question": "السؤال", "options": ["خيار1", "خيار2"]}]
+    3. إذا كان الطلب دردشة، التزم بأسلوب العضو المخصص ونوع في المناداة بالأسماء المتاحة له.`
 });
 
 const mongoClient = new MongoClient(mongoUri);
 let db, historyCol;
 
-async function fileToGenerativePart(url, mimeType) {
-    const response = await fetch(url);
-    const buffer = await response.arrayBuffer();
-    return {
-        inlineData: {
-            data: Buffer.from(buffer).toString("base64"),
-            mimeType
-        },
-    };
-}
-
+// دالة تقسيم الرسائل
 function splitMessage(text) {
     const maxLength = 1950;
     const chunks = [];
-    for (let i = 0; i < text.length; i += maxLength) {
-        chunks.push(text.substring(i, i + maxLength));
-    }
+    for (let i = 0; i < text.length; i += maxLength) { chunks.push(text.substring(i, i + maxLength)); }
     return chunks;
 }
 
@@ -72,91 +58,64 @@ async function startBot() {
         await mongoClient.connect();
         db = mongoClient.db('discord_bot_db');
         historyCol = db.collection('chat_history');
-        console.log("✅ نظام الذاكرة والرؤية متصل بـ MongoDB");
         await client.login(discordToken);
-    } catch (e) { console.error("❌ خطأ في التشغيل:", e); }
+        console.log("✅ البوت شغال، الويب سيرفس فعال، ونظام التصويت جاهز");
+    } catch (e) { console.error("❌ خطأ التشغيل:", e); }
 }
 
-cron.schedule('0 0 * * *', async () => {
-    await historyCol.deleteMany({});
-    console.log("🧹 تم تصفير ذاكرة المستخدمين لليوم الجديد.");
-});
-
-async function getSummary(oldMessages, currentSummary) {
-    try {
-        const text = oldMessages.map(h => `${h.role}: ${h.content}`).join("\n");
-        const prompt = `بناءً على التلخيص القديم: (${currentSummary})، حدثه ليشمل المعلومات الهامة باختصار شديد جداً:\n\n${text}`;
-        const result = await model.generateContent(prompt);
-        return result.response.text();
-    } catch (e) { return currentSummary; }
-}
+cron.schedule('0 0 * * *', async () => { await historyCol.deleteMany({}); });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot || message.content.startsWith('!')) return;
-    if (!message.mentions.has(client.user)) return;
 
-    const cleanMessage = message.content.replace(/<@!?\d+>/g, '').trim();
-    
-    let imageParts = [];
-    if (message.attachments.size > 0) {
-        imageParts = await Promise.all(
-            message.attachments.map(a => fileToGenerativePart(a.url, a.contentType))
-        );
-    }
+    const startsWithNickname = message.content.trim().startsWith('حمودي');
+    const isMentioned = message.mentions.has(client.user);
+    if (!startsWithNickname && !isMentioned) return;
 
-    if (!cleanMessage && imageParts.length === 0) {
-        return message.reply("منشنتني وضيعت وقتي على الفاضي؟ خلصني وش تبي؟");
-    }
+    let cleanMessage = message.content.replace(/<@!?\d+>/g, '').trim();
+    if (cleanMessage.startsWith('حمودي')) cleanMessage = cleanMessage.replace(/^حمودي/, '').trim();
 
     const userId = message.author.id;
     let data = await historyCol.findOne({ userId }) || { userId, messages: [], summary: "" };
 
-    if (data.messages.length >= 20) {
-        const messagesToSummarize = data.messages.slice(0, 10);
-        data.summary = await getSummary(messagesToSummarize, data.summary);
-        data.messages = data.messages.slice(10);
-    }
+    let userSpecialInstruction = specialUsers[userId] ? `[أسلوب العضو]: ${specialUsers[userId].style} الأسماء المتاحة: (${specialUsers[userId].names.join(", ")})` : "";
+    const saudiTime = new Date().toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh' });
 
-    const conversationHistory = data.messages.map(m => `${m.role === 'user' ? 'المستخدم' : 'أنت'}: ${m.content}`).join("\n");
-    
-    const saudiTime = new Date().toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit', hour12: true });
-
-    const finalPrompt = `
-[معلومات النظام]: الوقت الحالي في جدة: ${saudiTime}
-[خلفية الحوار]: ${data.summary}
-[آخر الرسائل]:
-${conversationHistory}
-[الرسالة الجديدة/الملف]: ${cleanMessage || "(أرسل ملفاً للتحليل)"}
-`;
+    const finalPrompt = `[الوقت]: ${saudiTime}\n${userSpecialInstruction}\n[الخلفية]: ${data.summary}\n[الطلب]: ${cleanMessage}`;
 
     try {
         await message.channel.sendTyping();
-
-        const result = await model.generateContent([finalPrompt, ...imageParts]);
+        const result = await model.generateContent(finalPrompt);
         const responseText = result.response.text();
 
-        data.messages.push({ role: "user", content: cleanMessage || "(أرسل مرفقاً)" });
-        data.messages.push({ role: "bot", content: responseText });
+        const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+            try {
+                const polls = JSON.parse(jsonMatch[1]);
+                for (const pollData of polls) {
+                    await message.channel.send({
+                        poll: {
+                            question: { text: pollData.question },
+                            answers: pollData.options.slice(0, 10).map(opt => ({ text: opt })),
+                            duration: 24
+                        }
+                    });
+                }
+                return;
+            } catch (e) { console.error("JSON Error:", e); }
+        }
 
+        data.messages.push({ role: "user", content: cleanMessage });
+        data.messages.push({ role: "bot", content: responseText });
         await historyCol.updateOne({ userId }, { $set: data }, { upsert: true });
 
         const chunks = splitMessage(responseText);
-        for (const chunk of chunks) { 
-            await message.reply(chunk).catch(e => console.error(e)); 
-        }
-        
-    } catch (error) {
-        console.error("⚠️ خطأ سياقي:", error.message);
-        if (error.message.includes("429")) {
-            await message.reply("ياكثر هرجكم، مخي علّق من ضغط الرسايل! دقيقة وراجع لكم.");
-        } else {
-            await message.reply("حدث خطأ، غالباً الملف كبير بزيادة أو غباء الطلب خرّب البرمجة.");
-        }
-    }
-});
+        for (const chunk of chunks) { await message.reply(chunk); }
 
-client.once('ready', (c) => { // تعديل بسيط هنا من clientReady إلى ready
-    console.log(`🚀 البوت المتنمر جاهز للعمل 24/7! الحساب: ${c.user.tag}`);
+    } catch (error) {
+        console.error("⚠️ Error:", error);
+        await message.reply("حصل خطأ بسيط، جرب تسألني مرة ثانية.");
+    }
 });
 
 startBot();
