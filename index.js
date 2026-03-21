@@ -138,35 +138,27 @@ async function transcribeBuffer(buffer) {
 }
 
 // ==============================
-// Memory Management (🔥 الجديد)
+// Memory Management 
 // ==============================
-
-// دالة لجلب تاريخ المستخدم وترتيبه بشكل يقبله Gemini
 async function getUserContext(userId) {
-    // نجلب كل رسائل المستخدم ونرتبها من الأقدم للأحدث
     const messages = await historyCol.find({ userId }).sort({ timestamp: 1 }).toArray();
     
     if (messages.length === 0) return [];
 
-    // التحقق من الجلسة (15 دقيقة خمول)
     const lastMessage = messages[messages.length - 1];
     const now = new Date();
     const timeDiffMinutes = (now - new Date(lastMessage.timestamp)) / (1000 * 60);
 
     if (timeDiffMinutes > 15) {
-        // إذا مر أكثر من 15 دقيقة، نمسح التاريخ ونبدأ جلسة جديدة
         await historyCol.deleteMany({ userId });
         return [];
     }
 
-    // تجهيز التاريخ بصيغة Gemini
     let formattedHistory = [];
     for (const msg of messages) {
-        // إذا كانت الرسالة من المستخدم
         if (msg.role === 'user') {
             formattedHistory.push({ role: "user", parts: [{ text: msg.content }] });
         } 
-        // إذا كانت الرسالة من البوت (Gemini يقبلها كـ "model" وليس "bot")
         else if (msg.role === 'model') {
             formattedHistory.push({ role: "model", parts: [{ text: msg.content }] });
         }
@@ -175,18 +167,16 @@ async function getUserContext(userId) {
     return formattedHistory;
 }
 
-// دالة لحفظ الرسالة في الداتا بيس
 async function saveMessage(userId, role, content) {
     const now = new Date();
-    // نضيف 60 دقيقة لعمر الرسالة (عشان تنحذف تلقائياً)
     const expireAt = new Date(now.getTime() + 60 * 60 * 1000); 
 
     await historyCol.insertOne({
         userId,
-        role, // 'user' أو 'model'
+        role,
         content,
         timestamp: now,
-        expireAt: expireAt // الـ TTL Index بيستخدم هذا الحقل
+        expireAt: expireAt 
     });
 }
 
@@ -196,10 +186,8 @@ async function saveMessage(userId, role, content) {
 async function startBot() {
     await mongoClient.connect();
     db = mongoClient.db("discord_bot_db");
-    // غيّرنا اسم الكولكشن عشان النظام الجديد
     historyCol = db.collection("smart_chat_history");
 
-    // تفعيل الـ TTL Index عشان مونقو يمسح الرسائل اللي مر عليها ساعة تلقائياً
     await historyCol.createIndex({ "expireAt": 1 }, { expireAfterSeconds: 0 });
 
     const clientID = await play.getFreeClientID();
@@ -231,6 +219,9 @@ client.on("messageCreate", async (msg) => {
                 selfDeaf: false
             });
 
+            // 🟢 تفعيل وضع "المحادثة المستمرة" بشكل افتراضي عند الدخول
+            conn.continuousMode = true; 
+
             startListening(conn);
             return msg.reply("دخلت الروم قاعد أسمعك 🎤");
         }
@@ -261,8 +252,6 @@ client.on("messageCreate", async (msg) => {
         }
 
         const userId = msg.author.id;
-        
-        // 🟢 جلب التاريخ الذكي
         const chatHistory = await getUserContext(userId);
 
         const saudiTime = new Date().toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" });
@@ -287,7 +276,6 @@ client.on("messageCreate", async (msg) => {
             }
         }
 
-        // 🟢 إرسال الطلب مع التاريخ (السياق)
         const chat = chatModel.startChat({
             history: chatHistory
         });
@@ -310,7 +298,6 @@ client.on("messageCreate", async (msg) => {
             return;
         }
 
-        // 🟢 حفظ الرسائل في الذاكرة
         await saveMessage(userId, 'user', cleanMessage);
         await saveMessage(userId, 'model', responseText);
 
@@ -353,9 +340,7 @@ function startListening(connection) {
                 const clean = text.trim().replace(/[.,!?،؟]/g, "");
                 console.log("سمع من", userId, ":", clean);
 
-                let commandText = "";
-                let isWakeWord = false;
-
+                // 1. أوامر الخروج
                 if (clean === "مودي اخرج" || clean === "مودي أخرج" || clean === "مودي اطلع" || 
                     clean === "حمودي اخرج" || clean === "حمودي أخرج" || clean === "حمودي اطلع") {
                     console.log("[Action] Executing voice disconnect command.");
@@ -363,6 +348,23 @@ function startListening(connection) {
                     return;
                 }
 
+                // 2. أوامر تغيير المود (السكوت والمحادثة المستمرة)
+                if (clean === "حمودي اسكت" || clean === "مودي اسكت") {
+                    connection.continuousMode = false;
+                    playAudio(connection, "حاضر، طال عمرك بسكت وما أرد إلا إذا ناديتني.");
+                    return;
+                }
+
+                if (clean === "حمودي تكلم" || clean === "مودي تكلم") {
+                    connection.continuousMode = true;
+                    playAudio(connection, "أبشر، أنا معاك على الخط وأسمع كل شيء.");
+                    return;
+                }
+
+                let commandText = "";
+                let isWakeWord = false;
+
+                // 3. الفلتر المزدوج (فحص النداء)
                 if (clean.startsWith("مودي")) {
                     isWakeWord = true;
                     commandText = clean.replace(/^مودي\s*/i, "");
@@ -374,9 +376,17 @@ function startListening(connection) {
                     commandText = clean; 
                 }
 
-                if (!isWakeWord || commandText === "") return;
+                // 4. التحقق من وضع البوت (هل يتجاهل أو يرد؟)
+                if (!isWakeWord) {
+                    if (!connection.continuousMode) {
+                        return; // البوت في وضع السكوت، والكلمة ليست نداء -> تجاهل
+                    } else {
+                        commandText = clean; // البوت في وضع المحادثة، خذ الكلام كله
+                    }
+                }
 
-                // 🟢 جلب التاريخ الذكي للصوتيات
+                if (commandText === "") return;
+
                 const chatHistory = await getUserContext(userId);
 
                 const prompt = `
@@ -390,7 +400,6 @@ function startListening(connection) {
 5. غير ذلك: رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
 `;
                 
-                // 🟢 بدأ المحادثة مع التاريخ
                 const chat = chatModel.startChat({
                     history: chatHistory
                 });
@@ -431,7 +440,6 @@ function startListening(connection) {
                     return;
                 }
 
-                // 🟢 حفظ الرسالة الصوتية في الذاكرة
                 await saveMessage(userId, 'user', commandText);
                 await saveMessage(userId, 'model', reply);
 
