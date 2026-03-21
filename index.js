@@ -339,7 +339,6 @@ function startListening(connection) {
                 const clean = text.trim().replace(/[.,!?،؟]/g, "");
                 console.log("سمع من", userId, ":", clean);
 
-                // 1. أمر الخروج المباشر للطوارئ
                 if (clean === "مودي اخرج" || clean === "مودي أخرج" || clean === "مودي اطلع" || 
                     clean === "حمودي اخرج" || clean === "حمودي أخرج" || clean === "حمودي اطلع") {
                     console.log("[Action] Executing voice disconnect command.");
@@ -350,7 +349,6 @@ function startListening(connection) {
                 let commandText = "";
                 let isWakeWord = false;
 
-                // 2. الفلتر المزدوج (فحص النداء)
                 if (clean.startsWith("مودي")) {
                     isWakeWord = true;
                     commandText = clean.replace(/^مودي\s*/i, "");
@@ -362,20 +360,24 @@ function startListening(connection) {
                     commandText = clean; 
                 }
 
-                // 3. التحقق من وضع البوت (هل يتجاهل أو يرد؟)
-                if (!isWakeWord) {
+                // 🔥 التحقق من النوايا لفك الميوت (حتى لو ما قال حمودي)
+                const isUnmuteAttempt = /(تكلم|سولف|ارجع|اصحى|رد)/.test(clean);
+
+                if (!isWakeWord && !isUnmuteAttempt) {
                     if (!connection.continuousMode) {
-                        return; // البوت في وضع السكوت، والكلمة ليست نداء -> تجاهل
+                        return; // البوت في وضع السكوت يتجاهل الكلام
                     } else {
-                        commandText = clean; // البوت في وضع المحادثة، خذ الكلام كله
+                        commandText = clean; 
                     }
                 }
 
-                if (commandText === "") return;
+                if (commandText === "" && !isUnmuteAttempt) return;
+                
+                // في حالة إن الكلمة الوحيدة هي "تكلم"، نمررها للذكاء كاملة عشان يفهم
+                if (commandText === "") commandText = clean;
 
                 const chatHistory = await getUserContext(userId);
 
-                // 🔥 الذكاء الاصطناعي هو اللي بيحلل النية (اسكت / تكلم)
                 const prompt = `
 المستخدم قال: "${commandText}"
 
@@ -385,7 +387,7 @@ function startListening(connection) {
 3. إذا طلب تعديل مستوى الصوت، اكتب فقط: VOL:[الرقم] (مثال: VOL:50)
 4. إذا طلب منك الخروج أو مغادرة الروم، اكتب فقط: LEAVE
 5. إذا طلب منك السكوت، التوقف عن الكلام، أو الصمت (مثل: اسكت، أصمت، اصمت، انطم، ولا كلمة)، اكتب فقط: MUTE
-6. إذا طلب منك التحدث أو الرجوع للرد المستمر (مثل: تكلم، ارجع، سولف)، اكتب فقط: UNMUTE
+6. إذا طلب منك التحدث أو الرجوع للرد المستمر بأي صيغة (مثل: تكلم، ارجع، سولف، اصحى)، اكتب فقط: UNMUTE
 7. غير ذلك: رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
 `;
                 
@@ -398,7 +400,6 @@ function startListening(connection) {
                 let reply = res.response.text().trim();
                 reply = reply.replace(/[\u{1F600}-\u{1F6FF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''); 
 
-                // تنفيذ أوامر النظام بناءً على فهم الذكاء الاصطناعي
                 if (reply === "MUTE") {
                     connection.continuousMode = false;
                     playAudio(connection, "حاضر طال عمرك، بسكت وما أرد إلا إذا ناديتني.");
@@ -455,7 +456,7 @@ function startListening(connection) {
 }
 
 // ==============================
-// TTS
+// TTS (الإيقاف والاستئناف السلس)
 // ==============================
 async function playAudio(connection, text) {
     try {
@@ -463,12 +464,38 @@ async function playAudio(connection, text) {
         await tts.setMetadata('ar-SA-ZariyahNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
         const { audioStream } = tts.toStream(text);
-        const player = createAudioPlayer();
+        const ttsPlayer = createAudioPlayer();
         const resource = createAudioResource(audioStream, { inputType: StreamType.Arbitrary, inlineVolume: true });
         
         resource.volume.setVolume(1.0); 
-        player.play(resource);
-        connection.subscribe(player);
+
+        // 🔥 فحص إذا كانت الأغنية شغالة عشان نوقفها مؤقتاً
+        const musicPlayer = connection.currentMusicPlayer;
+        const wasPlayingMusic = musicPlayer && musicPlayer.state.status === AudioPlayerStatus.Playing;
+
+        if (wasPlayingMusic) {
+            musicPlayer.pause(); 
+        }
+
+        ttsPlayer.play(resource);
+        connection.subscribe(ttsPlayer);
+
+        // 🔥 أول ما يخلص كلام، ترجع الأغنية تكمل تلقائياً
+        ttsPlayer.on(AudioPlayerStatus.Idle, () => {
+            if (wasPlayingMusic && connection.currentMusicPlayer) {
+                connection.subscribe(connection.currentMusicPlayer);
+                connection.currentMusicPlayer.unpause(); 
+            }
+        });
+
+        ttsPlayer.on('error', (err) => {
+            console.error("TTS Player Error:", err);
+            if (wasPlayingMusic && connection.currentMusicPlayer) {
+                connection.subscribe(connection.currentMusicPlayer);
+                connection.currentMusicPlayer.unpause();
+            }
+        });
+
     } catch (err) {
         console.error("TTS Error:", err);
     }
