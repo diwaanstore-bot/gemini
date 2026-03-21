@@ -197,7 +197,6 @@ async function startBot() {
     console.log("Bot Ready 🚀");
 }
 
-
 // ==============================
 // Text Chat & Commands Logic
 // ==============================
@@ -219,6 +218,7 @@ client.on("messageCreate", async (msg) => {
                 selfDeaf: false
             });
 
+            // 🟢 تفعيل وضع "المحادثة المستمرة" الافتراضي عند الدخول
             conn.continuousMode = true; 
 
             startListening(conn);
@@ -309,7 +309,7 @@ client.on("messageCreate", async (msg) => {
 });
 
 // ==============================
-// Voice Listening & Logic
+// Voice Listening & Logic (Toggle System)
 // ==============================
 function startListening(connection) {
     const receiver = connection.receiver;
@@ -339,43 +339,61 @@ function startListening(connection) {
                 const clean = text.trim().replace(/[.,!?،؟]/g, "");
                 console.log("سمع من", userId, ":", clean);
 
-                if (clean === "مودي اخرج" || clean === "مودي أخرج" || clean === "مودي اطلع" || 
-                    clean === "حمودي اخرج" || clean === "حمودي أخرج" || clean === "حمودي اطلع") {
+                // 🔥 1. أوامر التبديل الثابتة (Hardcoded Toggle) لسرعة الاستجابة
+                const muteRegex = /^(مودي|حمودي)\s+(اسكت|أسكت|اصمت|أصمت|انطم|ولا كلمة)/i;
+                const unmuteRegex = /^(مودي|حمودي)\s+(تكلم|اهرج|أهرج|سولف|ارجع|اصحى|رد)/i;
+                const leaveRegex = /^(مودي|حمودي)\s+(اخرج|أخرج|اطلع|غادر)/i;
+
+                if (leaveRegex.test(clean)) {
                     console.log("[Action] Executing voice disconnect command.");
                     connection.destroy();
                     return;
                 }
 
-                let commandText = "";
-                let isWakeWord = false;
+                if (muteRegex.test(clean)) {
+                    connection.continuousMode = false;
+                    playAudio(connection, "حاضر طال عمرك، بسكت وما أرد إلا إذا ناديتني.");
+                    return;
+                }
 
-                if (clean.startsWith("مودي")) {
-                    isWakeWord = true;
+                if (unmuteRegex.test(clean)) {
+                    connection.continuousMode = true;
+                    playAudio(connection, "أبشر، أنا معاك على الخط وأسمع كل شيء.");
+                    return;
+                }
+
+                // 2. التحقق من النداء المباشر (حمودي/مودي/شغل)
+                let commandText = "";
+                let hasWakeWord = false;
+
+                if (clean.startsWith("مودي ")) {
+                    hasWakeWord = true;
                     commandText = clean.replace(/^مودي\s*/i, "");
-                } else if (clean.startsWith("حمودي")) {
-                    isWakeWord = true;
+                } else if (clean.startsWith("حمودي ")) {
+                    hasWakeWord = true;
                     commandText = clean.replace(/^حمودي\s*/i, "");
-                } else if (clean.startsWith("شغل")) {
-                    isWakeWord = true;
+                } else if (clean === "مودي" || clean === "حمودي") {
+                    hasWakeWord = true;
+                    commandText = clean; // إذا ناداه باسمه بس يرد عليه
+                } else if (clean.startsWith("شغل ") || clean.startsWith("وقف") || clean.startsWith("صوت")) {
+                    hasWakeWord = true;
                     commandText = clean; 
                 }
 
-                // 🔥 التحقق من النوايا لفك الميوت (حتى لو ما قال حمودي)
-                const isUnmuteAttempt = /(تكلم|سولف|ارجع|اصحى|رد)/.test(clean);
-
-                if (!isWakeWord && !isUnmuteAttempt) {
-                    if (!connection.continuousMode) {
-                        return; // البوت في وضع السكوت يتجاهل الكلام
-                    } else {
-                        commandText = clean; 
-                    }
+                // 🔥 3. شرط وضع السكوت (Muted Mode Constraint)
+                if (!connection.continuousMode && !hasWakeWord) {
+                    // البوت ساكت والمستخدم ما ناداه بالكلمة المفتاحية = تجاهل الكلام كلياً
+                    return;
                 }
 
-                if (commandText === "" && !isUnmuteAttempt) return;
-                
-                // في حالة إن الكلمة الوحيدة هي "تكلم"، نمررها للذكاء كاملة عشان يفهم
-                if (commandText === "") commandText = clean;
+                // إذا كان البوت في المحادثة المستمرة، ياخذ الكلام كامل
+                if (connection.continuousMode && !hasWakeWord) {
+                    commandText = clean;
+                }
 
+                if (commandText === "") return;
+
+                // 4. الإرسال إلى الذكاء الاصطناعي لفهم السياق
                 const chatHistory = await getUserContext(userId);
 
                 const prompt = `
@@ -385,10 +403,7 @@ function startListening(connection) {
 1. إذا طلب تشغيل شيء، استخرج اسمه واكتب فقط: PLAY:[الاسم] (مثال: PLAY:الاماكن). إياك تلخيص الاسم.
 2. إذا طلب إيقاف المقطع، اكتب فقط: PAUSE
 3. إذا طلب تعديل مستوى الصوت، اكتب فقط: VOL:[الرقم] (مثال: VOL:50)
-4. إذا طلب منك الخروج أو مغادرة الروم، اكتب فقط: LEAVE
-5. إذا طلب منك السكوت، التوقف عن الكلام، أو الصمت (مثل: اسكت، أصمت، اصمت، انطم، ولا كلمة)، اكتب فقط: MUTE
-6. إذا طلب منك التحدث أو الرجوع للرد المستمر بأي صيغة (مثل: تكلم، ارجع، سولف، اصحى)، اكتب فقط: UNMUTE
-7. غير ذلك: رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
+4. غير ذلك: رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
 `;
                 
                 const chat = chatModel.startChat({
@@ -399,24 +414,6 @@ function startListening(connection) {
 
                 let reply = res.response.text().trim();
                 reply = reply.replace(/[\u{1F600}-\u{1F6FF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''); 
-
-                if (reply === "MUTE") {
-                    connection.continuousMode = false;
-                    playAudio(connection, "حاضر طال عمرك، بسكت وما أرد إلا إذا ناديتني.");
-                    return;
-                }
-
-                if (reply === "UNMUTE") {
-                    connection.continuousMode = true;
-                    playAudio(connection, "أبشر، أنا معاك على الخط وأسمع كل شيء.");
-                    return;
-                }
-
-                if (reply === "LEAVE") {
-                    console.log("[Action] Disconnecting from Voice.");
-                    connection.destroy();
-                    return;
-                }
 
                 if (reply.startsWith("PLAY:")) {
                     const song = reply.replace("PLAY:", "").trim();
@@ -443,6 +440,7 @@ function startListening(connection) {
                     return;
                 }
 
+                // حفظ الرسالة وتشغيل الرد
                 await saveMessage(userId, 'user', commandText);
                 await saveMessage(userId, 'model', reply);
 
@@ -469,7 +467,6 @@ async function playAudio(connection, text) {
         
         resource.volume.setVolume(1.0); 
 
-        // 🔥 فحص إذا كانت الأغنية شغالة عشان نوقفها مؤقتاً
         const musicPlayer = connection.currentMusicPlayer;
         const wasPlayingMusic = musicPlayer && musicPlayer.state.status === AudioPlayerStatus.Playing;
 
@@ -480,7 +477,6 @@ async function playAudio(connection, text) {
         ttsPlayer.play(resource);
         connection.subscribe(ttsPlayer);
 
-        // 🔥 أول ما يخلص كلام، ترجع الأغنية تكمل تلقائياً
         ttsPlayer.on(AudioPlayerStatus.Idle, () => {
             if (wasPlayingMusic && connection.currentMusicPlayer) {
                 connection.subscribe(connection.currentMusicPlayer);
