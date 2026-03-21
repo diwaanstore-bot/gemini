@@ -33,7 +33,6 @@ let currentMusicVolume = 0.5;
 const userCooldown = new Map();
 const COOLDOWN = 3000;
 
-// 🚫 القائمة السوداء: الحسابات اللي البوت ما راح يسحب صوتها أبداً
 const BLACKLISTED_USERS = [
     "451379187031343104",
     "944016826751389717"
@@ -45,12 +44,10 @@ const BLACKLISTED_USERS = [
 const discordToken = process.env.DISCORD_TOKEN;
 const mongoClient = new MongoClient("mongodb+srv://Nael:i8VFiKISASCUzX5O@discordbot.wzwjonu.mongodb.net/discord_casino?retryWrites=true&w=majority&appName=DiscordBot");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// 🔥 مفتاح Groq المجاني الخاص بك (بديل OpenAI)
 const GROQ_API_KEY = "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";
 
 // ==============================
-// Gemini (المخ والتفكير)
+// Gemini 
 // ==============================
 const chatModel = genAI.getGenerativeModel({
     model: "gemini-3.1-flash-lite-preview",
@@ -108,7 +105,7 @@ function getWavHeader(length) {
 }
 
 // ==============================
-// STT (Groq API - Whisper) 🔥 مجاني وسريع جداً
+// STT (Groq API)
 // ==============================
 async function transcribeBuffer(buffer) {
     try {
@@ -141,12 +138,69 @@ async function transcribeBuffer(buffer) {
 }
 
 // ==============================
+// Memory Management (🔥 الجديد)
+// ==============================
+
+// دالة لجلب تاريخ المستخدم وترتيبه بشكل يقبله Gemini
+async function getUserContext(userId) {
+    // نجلب كل رسائل المستخدم ونرتبها من الأقدم للأحدث
+    const messages = await historyCol.find({ userId }).sort({ timestamp: 1 }).toArray();
+    
+    if (messages.length === 0) return [];
+
+    // التحقق من الجلسة (15 دقيقة خمول)
+    const lastMessage = messages[messages.length - 1];
+    const now = new Date();
+    const timeDiffMinutes = (now - new Date(lastMessage.timestamp)) / (1000 * 60);
+
+    if (timeDiffMinutes > 15) {
+        // إذا مر أكثر من 15 دقيقة، نمسح التاريخ ونبدأ جلسة جديدة
+        await historyCol.deleteMany({ userId });
+        return [];
+    }
+
+    // تجهيز التاريخ بصيغة Gemini
+    let formattedHistory = [];
+    for (const msg of messages) {
+        // إذا كانت الرسالة من المستخدم
+        if (msg.role === 'user') {
+            formattedHistory.push({ role: "user", parts: [{ text: msg.content }] });
+        } 
+        // إذا كانت الرسالة من البوت (Gemini يقبلها كـ "model" وليس "bot")
+        else if (msg.role === 'model') {
+            formattedHistory.push({ role: "model", parts: [{ text: msg.content }] });
+        }
+    }
+    
+    return formattedHistory;
+}
+
+// دالة لحفظ الرسالة في الداتا بيس
+async function saveMessage(userId, role, content) {
+    const now = new Date();
+    // نضيف 60 دقيقة لعمر الرسالة (عشان تنحذف تلقائياً)
+    const expireAt = new Date(now.getTime() + 60 * 60 * 1000); 
+
+    await historyCol.insertOne({
+        userId,
+        role, // 'user' أو 'model'
+        content,
+        timestamp: now,
+        expireAt: expireAt // الـ TTL Index بيستخدم هذا الحقل
+    });
+}
+
+// ==============================
 // Start Bot
 // ==============================
 async function startBot() {
     await mongoClient.connect();
     db = mongoClient.db("discord_bot_db");
-    historyCol = db.collection("chat_history");
+    // غيّرنا اسم الكولكشن عشان النظام الجديد
+    historyCol = db.collection("smart_chat_history");
+
+    // تفعيل الـ TTL Index عشان مونقو يمسح الرسائل اللي مر عليها ساعة تلقائياً
+    await historyCol.createIndex({ "expireAt": 1 }, { expireAfterSeconds: 0 });
 
     const clientID = await play.getFreeClientID();
     await play.setToken({ soundcloud: { client_id: clientID } });
@@ -155,9 +209,6 @@ async function startBot() {
     console.log("Bot Ready 🚀");
 }
 
-cron.schedule('0 0 * * *', async () => {
-    await historyCol.deleteMany({});
-});
 
 // ==============================
 // Text Chat & Commands Logic
@@ -210,7 +261,10 @@ client.on("messageCreate", async (msg) => {
         }
 
         const userId = msg.author.id;
-        let data = await historyCol.findOne({ userId }) || { userId, messages: [] };
+        
+        // 🟢 جلب التاريخ الذكي
+        const chatHistory = await getUserContext(userId);
+
         const saudiTime = new Date().toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" });
         const finalPrompt = `[الوقت]\n${saudiTime}\n\n[رسالة المستخدم]\n${cleanMessage}`;
 
@@ -233,7 +287,12 @@ client.on("messageCreate", async (msg) => {
             }
         }
 
-        const result = await chatModel.generateContent({ contents: [{ role: "user", parts }] });
+        // 🟢 إرسال الطلب مع التاريخ (السياق)
+        const chat = chatModel.startChat({
+            history: chatHistory
+        });
+
+        const result = await chat.sendMessage(parts);
         const responseText = result.response.text() || "لم أفهم الطلب.";
 
         const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
@@ -251,10 +310,9 @@ client.on("messageCreate", async (msg) => {
             return;
         }
 
-        data.messages.push({ role: "user", content: cleanMessage });
-        data.messages.push({ role: "bot", content: responseText });
-        if (data.messages.length > 20) data.messages.shift();
-        await historyCol.updateOne({ userId }, { $set: data }, { upsert: true });
+        // 🟢 حفظ الرسائل في الذاكرة
+        await saveMessage(userId, 'user', cleanMessage);
+        await saveMessage(userId, 'model', responseText);
 
         const chunks = splitMessage(responseText);
         for (const chunk of chunks) await msg.channel.send(chunk);
@@ -271,7 +329,6 @@ function startListening(connection) {
     const receiver = connection.receiver;
 
     receiver.speaking.on('start', (userId) => {
-        // التجاهل الذكي للبوت والقائمة السوداء
         if (userId === client.user.id || BLACKLISTED_USERS.includes(userId)) return;
 
         const stream = receiver.subscribe(userId, {
@@ -291,7 +348,7 @@ function startListening(connection) {
 
             try {
                 const text = await transcribeBuffer(wav);
-                if (!text) return; // حماية لو فشل Groq
+                if (!text) return; 
                 
                 const clean = text.trim().replace(/[.,!?،؟]/g, "");
                 console.log("سمع من", userId, ":", clean);
@@ -319,6 +376,9 @@ function startListening(connection) {
 
                 if (!isWakeWord || commandText === "") return;
 
+                // 🟢 جلب التاريخ الذكي للصوتيات
+                const chatHistory = await getUserContext(userId);
+
                 const prompt = `
 المستخدم قال: "${commandText}"
 
@@ -329,10 +389,13 @@ function startListening(connection) {
 4. إذا طلب منك الخروج أو مغادرة الروم، اكتب فقط: LEAVE
 5. غير ذلك: رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
 `;
-
-                const res = await chatModel.generateContent({
-                    contents: [{ role: "user", parts: [{ text: prompt }] }]
+                
+                // 🟢 بدأ المحادثة مع التاريخ
+                const chat = chatModel.startChat({
+                    history: chatHistory
                 });
+
+                const res = await chat.sendMessage(prompt);
 
                 let reply = res.response.text().trim();
                 reply = reply.replace(/[\u{1F600}-\u{1F6FF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''); 
@@ -368,6 +431,10 @@ function startListening(connection) {
                     return;
                 }
 
+                // 🟢 حفظ الرسالة الصوتية في الذاكرة
+                await saveMessage(userId, 'user', commandText);
+                await saveMessage(userId, 'model', reply);
+
                 playAudio(connection, reply);
 
             } catch (e) {
@@ -378,7 +445,7 @@ function startListening(connection) {
 }
 
 // ==============================
-// TTS (صوت حمودي دائماً 100%)
+// TTS
 // ==============================
 async function playAudio(connection, text) {
     try {
@@ -398,7 +465,7 @@ async function playAudio(connection, text) {
 }
 
 // ==============================
-// Music (حسب المتغير currentMusicVolume)
+// Music
 // ==============================
 async function playMusic(connection, query) {
     try {
