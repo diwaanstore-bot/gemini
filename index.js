@@ -42,9 +42,9 @@ const BLACKLISTED_USERS = [
 // ==============================
 // ENV & Keys
 // ==============================
-const discordToken = "MTM5NTAzNjcwMDE3ODI1NjAxNA.GNWIhG.JKNNVzxB_it-nxUTmPInJ89UdF4l7-lRlZ6Nps"; 
+const discordToken = process.env.DISCORD_TOKEN;
 const mongoClient = new MongoClient("mongodb+srv://Nael:i8VFiKISASCUzX5O@discordbot.wzwjonu.mongodb.net/discord_casino?retryWrites=true&w=majority&appName=DiscordBot");
-const genAI = new GoogleGenerativeAI("AIzaSyAzUEdXZbTo2YGG10yj3zTPc2UQv9kf5xA");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // 🔥 مفتاح Groq المجاني الخاص بك (بديل OpenAI)
 const GROQ_API_KEY = "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";
