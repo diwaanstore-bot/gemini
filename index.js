@@ -219,7 +219,6 @@ client.on("messageCreate", async (msg) => {
                 selfDeaf: false
             });
 
-            // 🟢 تفعيل وضع "المحادثة المستمرة" بشكل افتراضي عند الدخول
             conn.continuousMode = true; 
 
             startListening(conn);
@@ -340,7 +339,7 @@ function startListening(connection) {
                 const clean = text.trim().replace(/[.,!?،؟]/g, "");
                 console.log("سمع من", userId, ":", clean);
 
-                // 1. أوامر الخروج
+                // 1. أمر الخروج المباشر للطوارئ
                 if (clean === "مودي اخرج" || clean === "مودي أخرج" || clean === "مودي اطلع" || 
                     clean === "حمودي اخرج" || clean === "حمودي أخرج" || clean === "حمودي اطلع") {
                     console.log("[Action] Executing voice disconnect command.");
@@ -348,23 +347,10 @@ function startListening(connection) {
                     return;
                 }
 
-                // 2. أوامر تغيير المود (السكوت والمحادثة المستمرة)
-                if (clean === "حمودي اسكت" || clean === "مودي اسكت") {
-                    connection.continuousMode = false;
-                    playAudio(connection, "حاضر، طال عمرك بسكت وما أرد إلا إذا ناديتني.");
-                    return;
-                }
-
-                if (clean === "حمودي تكلم" || clean === "مودي تكلم") {
-                    connection.continuousMode = true;
-                    playAudio(connection, "أبشر، أنا معاك على الخط وأسمع كل شيء.");
-                    return;
-                }
-
                 let commandText = "";
                 let isWakeWord = false;
 
-                // 3. الفلتر المزدوج (فحص النداء)
+                // 2. الفلتر المزدوج (فحص النداء)
                 if (clean.startsWith("مودي")) {
                     isWakeWord = true;
                     commandText = clean.replace(/^مودي\s*/i, "");
@@ -376,7 +362,7 @@ function startListening(connection) {
                     commandText = clean; 
                 }
 
-                // 4. التحقق من وضع البوت (هل يتجاهل أو يرد؟)
+                // 3. التحقق من وضع البوت (هل يتجاهل أو يرد؟)
                 if (!isWakeWord) {
                     if (!connection.continuousMode) {
                         return; // البوت في وضع السكوت، والكلمة ليست نداء -> تجاهل
@@ -389,6 +375,7 @@ function startListening(connection) {
 
                 const chatHistory = await getUserContext(userId);
 
+                // 🔥 الذكاء الاصطناعي هو اللي بيحلل النية (اسكت / تكلم)
                 const prompt = `
 المستخدم قال: "${commandText}"
 
@@ -397,7 +384,9 @@ function startListening(connection) {
 2. إذا طلب إيقاف المقطع، اكتب فقط: PAUSE
 3. إذا طلب تعديل مستوى الصوت، اكتب فقط: VOL:[الرقم] (مثال: VOL:50)
 4. إذا طلب منك الخروج أو مغادرة الروم، اكتب فقط: LEAVE
-5. غير ذلك: رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
+5. إذا طلب منك السكوت، التوقف عن الكلام، أو الصمت (مثل: اسكت، أصمت، اصمت، انطم، ولا كلمة)، اكتب فقط: MUTE
+6. إذا طلب منك التحدث أو الرجوع للرد المستمر (مثل: تكلم، ارجع، سولف)، اكتب فقط: UNMUTE
+7. غير ذلك: رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
 `;
                 
                 const chat = chatModel.startChat({
@@ -408,6 +397,19 @@ function startListening(connection) {
 
                 let reply = res.response.text().trim();
                 reply = reply.replace(/[\u{1F600}-\u{1F6FF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''); 
+
+                // تنفيذ أوامر النظام بناءً على فهم الذكاء الاصطناعي
+                if (reply === "MUTE") {
+                    connection.continuousMode = false;
+                    playAudio(connection, "حاضر طال عمرك، بسكت وما أرد إلا إذا ناديتني.");
+                    return;
+                }
+
+                if (reply === "UNMUTE") {
+                    connection.continuousMode = true;
+                    playAudio(connection, "أبشر، أنا معاك على الخط وأسمع كل شيء.");
+                    return;
+                }
 
                 if (reply === "LEAVE") {
                     console.log("[Action] Disconnecting from Voice.");
