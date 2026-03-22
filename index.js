@@ -28,7 +28,7 @@ const client = new Client({
     ]
 });
 
-const ALLOWED_CHANNEL = "1418604976090910750";
+const ALLOWED_CHANNEL = "1481435021385666661";
 let currentMusicVolume = 0.5;
 const userCooldown = new Map();
 const COOLDOWN = 3000;
