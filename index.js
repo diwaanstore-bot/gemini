@@ -53,7 +53,7 @@ const HALLUCINATIONS = [
 const discordToken = process.env.DISCORD_TOKEN;
 const mongoClient = new MongoClient("mongodb+srv://Nael:i8VFiKISASCUzX5O@discordbot.wzwjonu.mongodb.net/discord_casino?retryWrites=true&w=majority&appName=DiscordBot");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const GROQ_API_KEY = "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";
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 // ==============================
 // Gemini (شات صافي بدون أوامر الموسيقى)
