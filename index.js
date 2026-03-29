@@ -554,7 +554,7 @@ function startListening(connection) {
 async function playAudio(connection, text) {
     try {
         const tts = new MsEdgeTTS();
-        await tts.setMetadata('ar-SA-ZariyahNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+        await tts.setMetadata('ar-SA-HamedNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
         const { audioStream } = tts.toStream(text);
         const ttsPlayer = createAudioPlayer();
@@ -834,7 +834,7 @@ async function playRpgVoiceText(guildId, vcId, text) {
         }
 
         const tts = new MsEdgeTTS();
-        await tts.setMetadata('ar-SA-ZariyahNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+        await tts.setMetadata('ar-SA-HamedNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
         const { audioStream } = tts.toStream(text);
 
         const ttsPlayer = createAudioPlayer();
