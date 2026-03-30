@@ -9,6 +9,7 @@
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.0",
     "@distube/ytdl-core": "^4.16.12",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/genai": "^1.44.0",
     "@google/generative-ai": "^0.24.1",
     "@napi-rs/canvas": "^0.1.73",
