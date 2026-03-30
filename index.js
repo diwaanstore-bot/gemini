@@ -482,6 +482,45 @@ function startListening(connection) {
                     return;
                 }
 
+                // ==========================================
+                // 🔥 إضافة نظام إلقاء الشعر بالفصحى
+                // ==========================================
+                const poetryRegex = /^(?:مودي\s+|حمودي\s+)?(قول شعر|سوي شعر|ألف شعر|الف شعر|عطني شعر|شعر)\s*(?:عن|في)?\s+(.+)/i;
+                const poetryMatch = clean.match(poetryRegex);
+
+                if (poetryMatch) {
+                    const topic = poetryMatch[2].trim();
+                    console.log(`[Action] جاري تأليف شعر عن: ${topic}`);
+
+                    const prompt = `أنت شاعر عربي فحل ومخضرم. اكتب 3 أو 4 أبيات شعرية قوية وموزونة باللغة العربية الفصحى عن: "${topic}".
+يجب أن تكون الأبيات مُشكّلة (بالحركات) لكي تُقرأ بشكل صحيح وواضح.
+بدون أي إيموجي، وبدون أي مقدمات أو شروحات، اكتب الأبيات الشعرية فقط.`;
+
+                    try {
+                        const chat = chatModel.startChat();
+                        const res = await chat.sendMessage(prompt);
+                        let poem = res.response.text().trim();
+                        
+                        // تنظيف الإيموجيات إن وجدت
+                        poem = poem.replace(/[\u{1F600}-\u{1F6FF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''); 
+                        
+                        console.log("القصيدة:\n", poem);
+
+                        // خدعة بسيطة: نستبدل النزول لسطر جديد بفاصلة כדי הTTS يوقف شوي (وقفة شعرية)
+                        let spokenPoem = "اسمع هالأبيات طال عمرك... \n" + poem.replace(/\n/g, " ،، \n");
+
+                        playAudio(connection, spokenPoem);
+                        
+                    } catch (err) {
+                        console.error("خطأ في تأليف الشعر:", err);
+                        playAudio(connection, "والله القريحة الشعرية مقفلة الحين، المعذرة.");
+                    }
+
+                    isProcessingVoice = false;
+                    return;
+                }
+                // ==========================================
+
                 let commandText = "";
                 let hasWakeWord = false;
 
