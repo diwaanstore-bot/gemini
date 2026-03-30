@@ -7,8 +7,11 @@ const express = require('express');
 const prism = require('prism-media');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 const play = require('play-dl');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
 require('dotenv').config();
-
+const ffmpegPath = require('ffmpeg-static');
 // ==============================
 // Web Server
 // ==============================
@@ -28,12 +31,12 @@ const client = new Client({
     ]
 });
 
-const ALLOWED_CHANNEL = "1481435021385666661";
+// 🔥 إضافة الروم الجديد للقائمة المسموحة
+const ALLOWED_CHANNELS = ["1481435021385666661", "1418594734091272244"];
 let currentMusicVolume = 0.5;
 const userCooldown = new Map();
 const COOLDOWN = 3000;
 
-// 🔥 قفل التداخل (عشان يركز مع شخص واحد في نفس الوقت)
 let isProcessingVoice = false;
 
 const BLACKLISTED_USERS = [
@@ -41,7 +44,6 @@ const BLACKLISTED_USERS = [
     "944016826751389717"
 ];
 
-// 🔥 قائمة هلوسات Whisper المعروفة
 const HALLUCINATIONS = [
     "شكرا", "شكراً", "لكم", "للمشاهدة", "اشتركوا", "اشترك", "القناة", "قناة", 
     "ترجمة", "نانسي", "قنقر", "تول", "اطبتول", "يبرط", "موتي", "عمودي", "يعطيكم العافية"
@@ -56,7 +58,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 // ==============================
-// Gemini (شات صافي بدون أوامر الموسيقى)
+// Gemini 
 // ==============================
 const chatModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash-lite", 
@@ -81,7 +83,7 @@ const chatModel = genAI.getGenerativeModel({
 let db, historyCol;
 
 // ==============================
-// Variables & Maps (RPG System)
+// RPG Maps
 // ==============================
 const rpgLobbies = new Map();
 const activeRpgGames = new Map();
@@ -214,7 +216,7 @@ async function startBot() {
 }
 
 // ==============================
-// RPG Interactions Router (أزرار وقوائم اللعبة)
+// RPG Interactions Router
 // ==============================
 client.on("interactionCreate", async (i) => {
     if (i.isButton()) {
@@ -228,40 +230,79 @@ client.on("interactionCreate", async (i) => {
     }
 });
 
-// ==============================
-// RPG Text Listener (مفصول عن أوامر البوت الأساسية)
-// ==============================
 client.on("messageCreate", async (msg) => {
     if (msg.author.bot) return;
 
-    // 1. أمر تشغيل اللعبة
     if (msg.content.trim().startsWith("كملها")) {
         const rest = msg.content.trim().slice(5).trim();
         const prompt = rest !== "" ? rest : "مغامرة عشوائية ومفاجئة";
         return startRpgLobby(msg, prompt);
     }
 
-    // 2. فلتر استقبال ردود اللاعبين داخل ثريد اللعبة
     if (msg.channel.isThread() && activeRpgGames.has(msg.channel.id)) {
         return handleRpgInput(msg);
     }
 });
 
-
 // ==============================
-// Text Chat & Commands Logic (البوت الأساسي)
+// Text Chat & Commands Logic 
 // ==============================
 client.on("messageCreate", async (msg) => {
     try {
-        // حماية تمنع الأوامر الأساسية من التدخل في الثريدات الخاصة بلعبة الـ RPG
         if (msg.channel.isThread() && activeRpgGames.has(msg.channel.id)) return;
-        
-        if (msg.channel.id !== ALLOWED_CHANNEL) return;
+        if (!ALLOWED_CHANNELS.includes(msg.channel.id)) return; // يدعم الرومين الآن
         if (msg.author.bot) return;
-        if (msg.content.trim().startsWith("كملها")) return; // تجاوزناها بالفلتر اللي فوق
+        if (msg.content.trim().startsWith("كملها")) return; 
 
         const exactMessage = msg.content.trim();
 
+        // 🔥 نظام إلقاء الشعر عن طريق الشات المباشر
+        const poetryRegex = /^(?:مودي\s+|حمودي\s+)?(قول شعر|سوي شعر|ألف شعر|الف شعر|عطني شعر|شعر)\s*(?:عن|في)?\s+(.+)/i;
+        const poetryMatch = exactMessage.match(poetryRegex);
+
+        if (poetryMatch) {
+            const topic = poetryMatch[2].trim();
+            const vc = msg.member.voice.channel;
+            
+            if (!vc) return msg.reply("❌ لازم تكون في روم صوتي عشان أسمعك الشعر والفخامة!");
+
+            let conn = getVoiceConnection(msg.guild.id);
+            if (!conn) {
+                conn = joinVoiceChannel({
+                    channelId: vc.id,
+                    guildId: vc.guild.id,
+                    adapterCreator: vc.guild.voiceAdapterCreator,
+                    selfDeaf: false
+                });
+                conn.continuousMode = true; 
+                startListening(conn); 
+            }
+
+            msg.reply(`جاري تأليف شعر عن **${topic}**... اسمعني بالروم 🎤`);
+
+            const prompt = `أنت شاعر عربي فحل ومخضرم. اكتب 3 أو 4 أبيات شعرية قوية وموزونة باللغة العربية الفصحى عن: "${topic}".
+يجب أن تكون الأبيات مُشكّلة (بالحركات) لكي تُقرأ بشكل صحيح وواضح.
+بدون أي إيموجي، وبدون أي مقدمات أو شروحات، اكتب الأبيات الشعرية فقط.`;
+
+            try {
+                const chat = chatModel.startChat();
+                const res = await chat.sendMessage(prompt);
+                let poem = res.response.text().trim();
+                
+                poem = poem.replace(/[\u{1F600}-\u{1F6FF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''); 
+                
+                let spokenPoem = "اسمع هالأبيات طال عمرك... \n" + poem.replace(/\n/g, " ،، \n");
+                
+                // تشغيل الشعر مع الإيقاع
+                playPoetryWithBeat(conn, spokenPoem);
+            } catch (err) {
+                console.error("خطأ في تأليف الشعر:", err);
+                playAudio(conn, "والله القريحة الشعرية مقفلة الحين، المعذرة.");
+            }
+            return; // إنهاء التنفيذ هنا عشان ما يكمل سوالف عادية
+        }
+
+        // --- باقي الأوامر العادية ---
         if (exactMessage === "حمودي ادخل") {
             const vc = msg.member.voice.channel;
             if (!vc) return msg.reply("لازم تكون في روم صوتي!");
@@ -274,7 +315,6 @@ client.on("messageCreate", async (msg) => {
             });
 
             conn.continuousMode = true; 
-
             startListening(conn);
             return msg.reply("دخلت الروم قاعد أسمعك 🎤");
         }
@@ -386,7 +426,14 @@ function startListening(connection) {
 
         const buffers = [];
         const pcm = stream.pipe(new prism.opus.Decoder({ rate: 48000, channels: 2 }));
-
+// حماية البوت من الكراش بسبب الحزم الصوتية التالفة
+pcm.on('error', (err) => {
+    if (err.message.includes('corrupted')) {
+        // تجاهل الخطأ لأن ديسكورد أرسل حزمة فارغة
+        return; 
+    }
+    console.error("PCM Decoder Error:", err);
+});
         pcm.on('data', (c) => buffers.push(c));
 
         pcm.on('end', async () => {
@@ -482,45 +529,6 @@ function startListening(connection) {
                     return;
                 }
 
-                // ==========================================
-                // 🔥 إضافة نظام إلقاء الشعر بالفصحى
-                // ==========================================
-                const poetryRegex = /^(?:مودي\s+|حمودي\s+)?(قول شعر|سوي شعر|ألف شعر|الف شعر|عطني شعر|شعر)\s*(?:عن|في)?\s+(.+)/i;
-                const poetryMatch = clean.match(poetryRegex);
-
-                if (poetryMatch) {
-                    const topic = poetryMatch[2].trim();
-                    console.log(`[Action] جاري تأليف شعر عن: ${topic}`);
-
-                    const prompt = `أنت شاعر عربي فحل ومخضرم. اكتب 3 أو 4 أبيات شعرية قوية وموزونة باللغة العربية الفصحى عن: "${topic}".
-يجب أن تكون الأبيات مُشكّلة (بالحركات) لكي تُقرأ بشكل صحيح وواضح.
-بدون أي إيموجي، وبدون أي مقدمات أو شروحات، اكتب الأبيات الشعرية فقط.`;
-
-                    try {
-                        const chat = chatModel.startChat();
-                        const res = await chat.sendMessage(prompt);
-                        let poem = res.response.text().trim();
-                        
-                        // تنظيف الإيموجيات إن وجدت
-                        poem = poem.replace(/[\u{1F600}-\u{1F6FF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''); 
-                        
-                        console.log("القصيدة:\n", poem);
-
-                        // خدعة بسيطة: نستبدل النزول لسطر جديد بفاصلة כדי הTTS يوقف شوي (وقفة شعرية)
-                        let spokenPoem = "اسمع هالأبيات طال عمرك... \n" + poem.replace(/\n/g, " ،، \n");
-
-                        playAudio(connection, spokenPoem);
-                        
-                    } catch (err) {
-                        console.error("خطأ في تأليف الشعر:", err);
-                        playAudio(connection, "والله القريحة الشعرية مقفلة الحين، المعذرة.");
-                    }
-
-                    isProcessingVoice = false;
-                    return;
-                }
-                // ==========================================
-
                 let commandText = "";
                 let hasWakeWord = false;
 
@@ -588,7 +596,116 @@ function startListening(connection) {
 }
 
 // ==============================
-// TTS (الإيقاف والاستئناف السلس)
+// الشعر + الإيقاع (FFmpeg - حفظ مؤقت ثم تشغيل)
+// ==============================
+async function playPoetryWithBeat(connection, text) {
+    try {
+        console.log("⏳ [1] جاري تجهيز الإيقاع...");
+        const beatsFolder = path.join(__dirname, 'beats');
+        if (!fs.existsSync(beatsFolder)) fs.mkdirSync(beatsFolder);
+        
+        const beats = fs.readdirSync(beatsFolder).filter(f => f.endsWith('.mp3'));
+        if (beats.length === 0) {
+            console.log("⚠️ مجلد beats فاضي أو مافيه ملفات mp3، بشغل الصوت عادي بدون إيقاع.");
+            return playAudio(connection, text); 
+        }
+        
+        // اختيار إيقاع عشوائي
+        const randomBeat = path.join(beatsFolder, beats[Math.floor(Math.random() * beats.length)]);
+        console.log(`🎵 تم اختيار الإيقاع: ${path.basename(randomBeat)}`);
+
+        console.log("⏳ [2] جاري توليد صوت الإلقاء (TTS)...");
+        const tts = new MsEdgeTTS();
+        await tts.setMetadata('ar-SA-HamedNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+        const { audioStream } = tts.toStream(text);
+
+        const uniqueId = Date.now();
+        const tempTtsPath = path.join(__dirname, `temp_tts_${uniqueId}.mp3`);
+        const tempMixPath = path.join(__dirname, `temp_mix_${uniqueId}.mp3`);
+
+        const writeStream = fs.createWriteStream(tempTtsPath);
+        audioStream.pipe(writeStream);
+
+        writeStream.on('finish', () => {
+            console.log("✅ [3] تم حفظ الصوت، جاري الدمج مع الموسيقى...");
+
+            const ffmpegPath = require('ffmpeg-static');
+            
+            // استخدام [0:a:0] لتجاهل أي صور ألبومات داخل الـ mp3 قد تخرب الدمج
+            const ffmpegArgs = [
+                '-i', randomBeat,               
+                '-i', tempTtsPath,              
+                '-filter_complex', '[0:a:0]volume=0.15[bg];[1:a:0]volume=1.5[tts];[bg][tts]amix=inputs=2:duration=shortest[out]',
+                '-map', '[out]',
+                '-y', 
+                tempMixPath 
+            ];
+
+            const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
+
+            let ffmpegLog = "";
+            ffmpegProcess.stderr.on('data', (data) => {
+                ffmpegLog += data.toString();
+            });
+
+            ffmpegProcess.on('close', (code) => {
+                // التحقق من أن الملف المدموج سليم وحجمه أكبر من 0 بايت
+                let isMixValid = false;
+                if (fs.existsSync(tempMixPath)) {
+                    const stats = fs.statSync(tempMixPath);
+                    if (stats.size > 1000) isMixValid = true; // لازم يكون أكبر من 1 كيلوبايت على الأقل
+                }
+
+                if (code !== 0 || !isMixValid) {
+                    console.error(`❌ فشل الدمج السحري للموسيقى. جاري تشغيل الإلقاء الصافي كاحتياط.`);
+                    // console.error("تفاصيل خطأ FFmpeg:", ffmpegLog); // احذف الشرطتين بالبداية لو تبي تشوف سبب الخطأ بالتفصيل
+                    return playGeneratedAudio(connection, tempTtsPath, tempMixPath); 
+                }
+
+                console.log("✅ [4] تم الدمج بنجاح، جاري التشغيل في الروم 🔊");
+                playGeneratedAudio(connection, tempMixPath, tempTtsPath);
+            });
+        });
+
+    } catch (err) {
+        console.error("❌ خطأ عام في دمج الصوت:", err);
+        playAudio(connection, text); 
+    }
+}
+
+// دالة مساعدة لتشغيل الملف الصوتي وحذفه بعد الانتهاء
+function playGeneratedAudio(connection, fileToPlay, otherFileToClean) {
+    const resource = createAudioResource(fileToPlay, { inlineVolume: true });
+    resource.volume.setVolume(1.0);
+    const player = createAudioPlayer();
+    
+    const currentMusic = connection.currentMusicPlayer;
+    if (currentMusic && currentMusic.state.status === AudioPlayerStatus.Playing) {
+        currentMusic.pause();
+    }
+
+    player.play(resource);
+    connection.subscribe(player);
+
+    player.on(AudioPlayerStatus.Idle, () => {
+        console.log("⏹️ [5] انتهى الإلقاء، جاري تنظيف الملفات المؤقتة...");
+        if (fs.existsSync(fileToPlay)) fs.unlinkSync(fileToPlay);
+        if (fs.existsSync(otherFileToClean)) fs.unlinkSync(otherFileToClean);
+        
+        if (currentMusic) {
+            connection.subscribe(currentMusic);
+            currentMusic.unpause();
+        }
+    });
+
+    player.on('error', (err) => {
+        console.error("❌ خطأ أثناء التشغيل:", err);
+        if (fs.existsSync(fileToPlay)) fs.unlinkSync(fileToPlay);
+        if (fs.existsSync(otherFileToClean)) fs.unlinkSync(otherFileToClean);
+    });
+}
+// ==============================
+// TTS العادي (للسوالف)
 // ==============================
 async function playAudio(connection, text) {
     try {
@@ -898,7 +1015,6 @@ async function processRpgRound(threadId, userInput) {
         game.options = data.options || [];
         game.players.forEach(p => p.action = null);
 
-        // تشغيل صوت القصة باستخدام msedge-tts الخاص ببوتك
         if (game.voiceMode && game.vcId) {
             playRpgVoiceText(game.guildId, game.vcId, data.scenario);
         }
