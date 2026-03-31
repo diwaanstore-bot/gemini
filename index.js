@@ -61,7 +61,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 // Gemini 
 // ==============================
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-lite", 
+    model: "gemini-3.1-flash-lite-preview", 
     systemInstruction: `
 أنت مساعد ذكي، متقدم، وسريع البديهة داخل بوت ديسكورد.
 الهدف الأساسي: أنت "مرآة" للمستخدم. يجب أن تحلل نبرة رسالته وترد عليه بنفس الأسلوب والطاقة تماماً.
