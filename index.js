@@ -12,6 +12,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 require('dotenv').config();
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+
 // ==============================
 // Web Server
 // ==============================
@@ -58,11 +59,22 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 // ==============================
-// Gemini 
+// Search Limit & Cron Job
 // ==============================
-const chatModel = genAI.getGenerativeModel({
-    model: "gemini-3.1-flash-lite-preview", 
-    systemInstruction: `
+let dailySearchCount = 0;
+const SEARCH_LIMIT = 1250;
+
+cron.schedule('0 0 * * *', () => {
+    dailySearchCount = 0;
+    console.log('🔄 تم تصفير عداد بحث جوجل اليومي!');
+}, {
+    timezone: "Asia/Riyadh" // التصفير بتوقيت السعودية
+});
+
+// ==============================
+// Gemini Models Setup
+// ==============================
+const SYSTEM_INSTRUCTION = `
 أنت مساعد ذكي، متقدم، وسريع البديهة داخل بوت ديسكورد.
 الهدف الأساسي: أنت "مرآة" للمستخدم. يجب أن تحلل نبرة رسالته وترد عليه بنفس الأسلوب والطاقة تماماً.
 
@@ -77,7 +89,19 @@ const chatModel = genAI.getGenerativeModel({
 \`\`\`json
 [{"question":"السؤال","options":["الخيار الأول","الخيار الثاني"]}]
 \`\`\`
-`
+`;
+
+// 1. الموديل العادي (للاستخدام في الصوت والمهام العادية)
+const chatModel = genAI.getGenerativeModel({
+    model: "gemini-3.1-flash-lite-preview", 
+    systemInstruction: SYSTEM_INSTRUCTION
+});
+
+// 2. الموديل الخاص بالشات النصي (مدمج مع أداة بحث جوجل)
+const chatModelSearch = genAI.getGenerativeModel({
+    model: "gemini-3.1-flash-lite-preview", 
+    systemInstruction: SYSTEM_INSTRUCTION,
+    tools: [{ googleSearch: {} }] // تفعيل أداة البحث
 });
 
 let db, historyCol;
@@ -285,6 +309,7 @@ client.on("messageCreate", async (msg) => {
 بدون أي إيموجي، وبدون أي مقدمات أو شروحات، اكتب الأبيات الشعرية فقط.`;
 
             try {
+                // استخدام الموديل العادي بدون انترنت للشعر (لضمان الفصاحة والسرعة)
                 const chat = chatModel.startChat();
                 const res = await chat.sendMessage(prompt);
                 let poem = res.response.text().trim();
@@ -369,7 +394,17 @@ client.on("messageCreate", async (msg) => {
             }
         }
 
-        const chat = chatModel.startChat({
+        // 🔥 الاختيار الذكي للموديل (تفعيل البحث بالانترنت إذا لم نصل للحد)
+        let activeModel = chatModel;
+        if (dailySearchCount < SEARCH_LIMIT) {
+            activeModel = chatModelSearch;
+            dailySearchCount++;
+            console.log(`🔍 [بحث جوجل] تم استخدام البحث في الشات النصي. (الاستهلاك اليومي: ${dailySearchCount}/${SEARCH_LIMIT})`);
+        } else {
+            console.log(`⚠️ [بحث جوجل] تم الوصول للحد اليومي (${SEARCH_LIMIT})، تم تحويل الطلب للموديل العادي بدون إنترنت.`);
+        }
+
+        const chat = activeModel.startChat({
             history: chatHistory
         });
 
@@ -426,14 +461,16 @@ function startListening(connection) {
 
         const buffers = [];
         const pcm = stream.pipe(new prism.opus.Decoder({ rate: 48000, channels: 2 }));
-// حماية البوت من الكراش بسبب الحزم الصوتية التالفة
-pcm.on('error', (err) => {
-    if (err.message.includes('corrupted')) {
-        // تجاهل الخطأ لأن ديسكورد أرسل حزمة فارغة
-        return; 
-    }
-    console.error("PCM Decoder Error:", err);
-});
+        
+        // حماية البوت من الكراش بسبب الحزم الصوتية التالفة
+        pcm.on('error', (err) => {
+            if (err.message.includes('corrupted')) {
+                // تجاهل الخطأ لأن ديسكورد أرسل حزمة فارغة
+                return; 
+            }
+            console.error("PCM Decoder Error:", err);
+        });
+        
         pcm.on('data', (c) => buffers.push(c));
 
         pcm.on('end', async () => {
@@ -565,7 +602,7 @@ pcm.on('error', (err) => {
 1. إياك كتابة مسودة تفكير أو تحليل للسياق. أكتب الرد النهائي مباشرة.
 2. رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
 `;
-                
+                // استخدام الموديل العادي بدون إنترنت لضمان سرعة الرد الصوتي
                 const chat = chatModel.startChat({
                     history: chatHistory
                 });
@@ -655,7 +692,6 @@ async function playPoetryWithBeat(connection, text) {
 
                 if (code !== 0 || !isMixValid) {
                     console.error(`❌ فشل الدمج السحري للموسيقى. جاري تشغيل الإلقاء الصافي كاحتياط.`);
-                    // console.error("تفاصيل خطأ FFmpeg:", ffmpegLog); // احذف الشرطتين بالبداية لو تبي تشوف سبب الخطأ بالتفصيل
                     return playGeneratedAudio(connection, tempTtsPath, tempMixPath); 
                 }
 
@@ -701,6 +737,7 @@ function playGeneratedAudio(connection, fileToPlay, otherFileToClean) {
         if (fs.existsSync(otherFileToClean)) fs.unlinkSync(otherFileToClean);
     });
 }
+
 // ==============================
 // TTS العادي (للسوالف)
 // ==============================
@@ -945,8 +982,9 @@ async function initiateRpgGame(channel, lobby) {
   "isGameOver": false
 }`;
 
+    // اللعبة النصية نستخدم معها الموديل العادي بدون بحث للحفاظ على التركيز على القصة
     const rpgModel = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash-lite",
+        model: "gemini-3.1-flash-lite-preview",
         systemInstruction: systemInstruction
     });
 
