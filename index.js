@@ -377,6 +377,7 @@ client.on("messageCreate", async (msg) => {
         }
 
         const userId = msg.author.id;
+        // جلب السجل من المونقو
         const chatHistory = await getUserContext(userId);
 
         const saudiTime = new Date().toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" });
@@ -401,21 +402,19 @@ client.on("messageCreate", async (msg) => {
             }
         }
 
-        // 🔥 نظام إدارة السجل والبحث الذكي (بدون إرسال الهيستوري كامل لتقليل الاستهلاك)
+        // 🔥 الاختيار الذكي للموديل (مع إرسال السجل الكامل دائماً)
         let activeModel = chatModel;
-        let activeHistory = chatHistory; // الديفولت هو السجل الكامل للمونقو
 
         if (dailySearchCount < SEARCH_LIMIT) {
             activeModel = chatModelSearch;
-            activeHistory = []; // إرسال سجل فارغ عشان يركز 100% على البحث بالإنترنت للسؤال الحالي فقط
             dailySearchCount++;
-            console.log(`🔍 [بحث جوجل] تم استخدام البحث في الشات. السجل مُفرغ للتركيز. (الاستهلاك: ${dailySearchCount}/${SEARCH_LIMIT})`);
+            console.log(`🔍 [بحث جوجل] تم استخدام البحث في الشات مع السجل الكامل. (الاستهلاك: ${dailySearchCount}/${SEARCH_LIMIT})`);
         } else {
             console.log(`⚠️ [بحث جوجل] تم الوصول للحد اليومي (${SEARCH_LIMIT})، تم تحويل الطلب للموديل العادي.`);
         }
 
         const chat = activeModel.startChat({
-            history: activeHistory
+            history: chatHistory // رجعنا المونقو نفس قبل يرسل السجل كامل
         });
 
         const result = await chat.sendMessage(parts);
@@ -442,7 +441,7 @@ client.on("messageCreate", async (msg) => {
             return;
         }
 
-        // حفظ المحادثة في المونقو عشان يتذكرها البوت لاحقاً (للموديل العادي)
+        // حفظ المحادثة في المونقو
         await saveMessage(userId, 'user', cleanMessage);
         await saveMessage(userId, 'model', responseText);
 
@@ -815,6 +814,7 @@ async function playMusic(connection, query) {
         console.error("Music Error:", err);
     }
 }
+
 
 // ==========================================
 // 🐉 نظام لعبة القصة (RPG) المدمج
