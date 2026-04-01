@@ -627,10 +627,7 @@ async function playPoetryWithBeat(connection, text) {
         audioStream.pipe(writeStream);
 
         writeStream.on('finish', () => {
-            console.log("✅ [3] تم حفظ الصوت، جاري الدمج مع الموسيقى...");
-
-            const ffmpegPath = require('ffmpeg-static');
-            
+            console.log("✅ [3] تم حفظ الصوت، جاري الدمج مع الموسيقى...");            
             // استخدام [0:a:0] لتجاهل أي صور ألبومات داخل الـ mp3 قد تخرب الدمج
             const ffmpegArgs = [
                 '-i', randomBeat,               
