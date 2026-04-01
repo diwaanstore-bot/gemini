@@ -91,6 +91,14 @@ const SYSTEM_INSTRUCTION = `
 \`\`\`
 `;
 
+// تعليمات صارمة جداً للبحث تمنع الهبد والتخمين
+const SEARCH_INSTRUCTION = SYSTEM_INSTRUCTION + `
+ملاحظة هامة جداً وحازمة: 
+أنت الآن متصل بالإنترنت. يجب عليك الاعتماد كلياً على أداة البحث (Google Search) للإجابة على سؤال المستخدم الحالي.
+يمنع منعاً باتاً التخمين أو تأليف الإجابات (الهلوسة) من معلوماتك السابقة.
+إذا طُلب منك كلمات أغنية، أسعار، أخبار، أو معلومات دقيقة، ابحث عنها فوراً وأعطِ الإجابة الدقيقة المستخرجة من الإنترنت.
+`;
+
 // 1. الموديل العادي (للاستخدام في الصوت والمهام العادية)
 const chatModel = genAI.getGenerativeModel({
     model: "gemini-3.1-flash-lite-preview", 
@@ -100,7 +108,7 @@ const chatModel = genAI.getGenerativeModel({
 // 2. الموديل الخاص بالشات النصي (مدمج مع أداة بحث جوجل)
 const chatModelSearch = genAI.getGenerativeModel({
     model: "gemini-3.1-flash-lite-preview", 
-    systemInstruction: SYSTEM_INSTRUCTION,
+    systemInstruction: SEARCH_INSTRUCTION,
     tools: [{ googleSearch: {} }] // تفعيل أداة البحث
 });
 
@@ -274,7 +282,7 @@ client.on("messageCreate", async (msg) => {
 client.on("messageCreate", async (msg) => {
     try {
         if (msg.channel.isThread() && activeRpgGames.has(msg.channel.id)) return;
-        if (!ALLOWED_CHANNELS.includes(msg.channel.id)) return; // يدعم الرومين الآن
+        if (!ALLOWED_CHANNELS.includes(msg.channel.id)) return; 
         if (msg.author.bot) return;
         if (msg.content.trim().startsWith("كملها")) return; 
 
@@ -309,7 +317,7 @@ client.on("messageCreate", async (msg) => {
 بدون أي إيموجي، وبدون أي مقدمات أو شروحات، اكتب الأبيات الشعرية فقط.`;
 
             try {
-                // استخدام الموديل العادي بدون انترنت للشعر (لضمان الفصاحة والسرعة)
+                // الشعر نستخدم فيه الموديل العادي بدون إنترنت لضمان الفصاحة
                 const chat = chatModel.startChat();
                 const res = await chat.sendMessage(prompt);
                 let poem = res.response.text().trim();
@@ -318,13 +326,12 @@ client.on("messageCreate", async (msg) => {
                 
                 let spokenPoem = "اسمع هالأبيات طال عمرك... \n" + poem.replace(/\n/g, " ،، \n");
                 
-                // تشغيل الشعر مع الإيقاع
                 playPoetryWithBeat(conn, spokenPoem);
             } catch (err) {
                 console.error("خطأ في تأليف الشعر:", err);
                 playAudio(conn, "والله القريحة الشعرية مقفلة الحين، المعذرة.");
             }
-            return; // إنهاء التنفيذ هنا عشان ما يكمل سوالف عادية
+            return; 
         }
 
         // --- باقي الأوامر العادية ---
@@ -394,18 +401,21 @@ client.on("messageCreate", async (msg) => {
             }
         }
 
-        // 🔥 الاختيار الذكي للموديل (تفعيل البحث بالانترنت إذا لم نصل للحد)
+        // 🔥 نظام إدارة السجل والبحث الذكي (بدون إرسال الهيستوري كامل لتقليل الاستهلاك)
         let activeModel = chatModel;
+        let activeHistory = chatHistory; // الديفولت هو السجل الكامل للمونقو
+
         if (dailySearchCount < SEARCH_LIMIT) {
             activeModel = chatModelSearch;
+            activeHistory = []; // إرسال سجل فارغ عشان يركز 100% على البحث بالإنترنت للسؤال الحالي فقط
             dailySearchCount++;
-            console.log(`🔍 [بحث جوجل] تم استخدام البحث في الشات النصي. (الاستهلاك اليومي: ${dailySearchCount}/${SEARCH_LIMIT})`);
+            console.log(`🔍 [بحث جوجل] تم استخدام البحث في الشات. السجل مُفرغ للتركيز. (الاستهلاك: ${dailySearchCount}/${SEARCH_LIMIT})`);
         } else {
-            console.log(`⚠️ [بحث جوجل] تم الوصول للحد اليومي (${SEARCH_LIMIT})، تم تحويل الطلب للموديل العادي بدون إنترنت.`);
+            console.log(`⚠️ [بحث جوجل] تم الوصول للحد اليومي (${SEARCH_LIMIT})، تم تحويل الطلب للموديل العادي.`);
         }
 
         const chat = activeModel.startChat({
-            history: chatHistory
+            history: activeHistory
         });
 
         const result = await chat.sendMessage(parts);
@@ -432,6 +442,7 @@ client.on("messageCreate", async (msg) => {
             return;
         }
 
+        // حفظ المحادثة في المونقو عشان يتذكرها البوت لاحقاً (للموديل العادي)
         await saveMessage(userId, 'user', cleanMessage);
         await saveMessage(userId, 'model', responseText);
 
@@ -462,10 +473,8 @@ function startListening(connection) {
         const buffers = [];
         const pcm = stream.pipe(new prism.opus.Decoder({ rate: 48000, channels: 2 }));
         
-        // حماية البوت من الكراش بسبب الحزم الصوتية التالفة
         pcm.on('error', (err) => {
             if (err.message.includes('corrupted')) {
-                // تجاهل الخطأ لأن ديسكورد أرسل حزمة فارغة
                 return; 
             }
             console.error("PCM Decoder Error:", err);
@@ -602,7 +611,7 @@ function startListening(connection) {
 1. إياك كتابة مسودة تفكير أو تحليل للسياق. أكتب الرد النهائي مباشرة.
 2. رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
 `;
-                // استخدام الموديل العادي بدون إنترنت لضمان سرعة الرد الصوتي
+                // المحادثة الصوتية تعتمد على السجل كامل وبدون بحث إنترنت للسرعة القصوى
                 const chat = chatModel.startChat({
                     history: chatHistory
                 });
@@ -807,7 +816,6 @@ async function playMusic(connection, query) {
     }
 }
 
-
 // ==========================================
 // 🐉 نظام لعبة القصة (RPG) المدمج
 // ==========================================
@@ -982,7 +990,6 @@ async function initiateRpgGame(channel, lobby) {
   "isGameOver": false
 }`;
 
-    // اللعبة النصية نستخدم معها الموديل العادي بدون بحث للحفاظ على التركيز على القصة
     const rpgModel = genAI.getGenerativeModel({
         model: "gemini-3.1-flash-lite-preview",
         systemInstruction: systemInstruction
