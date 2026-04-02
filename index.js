@@ -68,12 +68,32 @@ cron.schedule('0 0 * * *', () => {
     dailySearchCount = 0;
     console.log('🔄 تم تصفير عداد بحث جوجل اليومي!');
 }, {
-    timezone: "Asia/Riyadh" // التصفير بتوقيت السعودية
+    timezone: "Asia/Riyadh" 
 });
 
 // ==============================
-// Gemini Models Setup
+// Gemini Models Setup & Aliases
 // ==============================
+const ALIASES_PROMPT = `
+\nمعلومات هامة جداً عن الأعضاء (استخدم المعرف الخاص بهم <@ID> لعمل منشن فقط عند الضرورة للتفاعل):
+قائمة بأسماء الأشخاص ومعرفاتهم:
+- شكشك , شكشوكة , شكشوكه, ميلودي, ملودي, ساسوكي = <@1106288355228004372>
+- نايل, الملك, القرد,نيولي,كمون,كمونة,كمونه,الجيزاني = <@532264405476573224>
+- سويدة, سويده, ايفا, العبدة, العبده = <@1270057947334185053>
+- لافندر, الجاسوسة, البعبع, الجاسوسه = <@545613574874071063>
+- ابي جا, خالد, بلو = <@734187812236034108>
+- انك, وحيدا, الرجل = <@696302530937880666>
+- جبنة, جبنه , كراش = <@359427305979772938>
+- كيري, القاصر, الاماراتي, الامراتي, الإماراتي = <@784147506908889118>
+- كركم , كيرم, ريتال = <@1097381729007849554>
+- السوري, سوري, القوت, ريان = <@1374244101205131274>
+
+قواعد المنشن (Mention Rules):
+1. لا تقم بالمنشن بشكل متكرر أو مزعج في كل رد.
+2. قم بعمل منشن للشخص (بكتابة المعرف <@ID>) فقط إذا كان السياق يتطلب التفاعل المباشر معه، مثلاً إذا أحدهم اشتكى منه لك، أو إذا أردت توجيه كلام حازم أو سؤال مباشر له. مثال: إذا قال لك شخص "شكشك يسبني"، يمكنك الرد بتفاعل: "يا <@1106288355228004372> عيب عليك ليه تسبه؟". 
+3. في الحوارات العادية جداً، اذكر اسمه فقط بدون المعرف.
+`;
+
 const SYSTEM_INSTRUCTION = `
 أنت مساعد ذكي، متقدم، وسريع البديهة داخل بوت ديسكورد.
 الهدف الأساسي: أنت "مرآة" للمستخدم. يجب أن تحلل نبرة رسالته وترد عليه بنفس الأسلوب والطاقة تماماً.
@@ -89,36 +109,47 @@ const SYSTEM_INSTRUCTION = `
 \`\`\`json
 [{"question":"السؤال","options":["الخيار الأول","الخيار الثاني"]}]
 \`\`\`
-`;
+` + ALIASES_PROMPT;
 
-// تعليمات صارمة جداً للبحث تمنع الهبد والتخمين
 const SEARCH_INSTRUCTION = SYSTEM_INSTRUCTION + `
 ملاحظة هامة جداً وحازمة: 
-أنت الآن متصل بالإنترنت. يجب عليك الاعتماد كلياً على أداة البحث (Google Search) للإجابة على سؤال المستخدم الحالي.
-يمنع منعاً باتاً التخمين أو تأليف الإجابات (الهلوسة) من معلوماتك السابقة.
-إذا طُلب منك كلمات أغنية، أسعار، أخبار، أو معلومات دقيقة، ابحث عنها فوراً وأعطِ الإجابة الدقيقة المستخرجة من الإنترنت.
+أنت الآن متصل بالإنترنت. يجب عليك الاعتماد كلياً على أداة البحث (Google Search) للإجابة على سؤال المستخدم الحالي إذا تطلب الأمر.
+يمنع منعاً باتاً التخمين أو تأليف الإجابات (الهلوسة). إذا طُلب منك كلمات أغنية، أسعار، أخبار، أو معلومات دقيقة، ابحث عنها فوراً وأعطِ الإجابة الدقيقة المستخرجة من الإنترنت.
 `;
 
-// 1. الموديل العادي (للاستخدام في الصوت والمهام العادية)
 const chatModel = genAI.getGenerativeModel({
     model: "gemini-3.1-flash-lite-preview", 
     systemInstruction: SYSTEM_INSTRUCTION
 });
 
-// 2. الموديل الخاص بالشات النصي (مدمج مع أداة بحث جوجل)
 const chatModelSearch = genAI.getGenerativeModel({
     model: "gemini-3.1-flash-lite-preview", 
     systemInstruction: SEARCH_INSTRUCTION,
-    tools: [{ googleSearch: {} }] // تفعيل أداة البحث
+    tools: [{ googleSearch: {} }] 
 });
 
 let db, historyCol;
 
 // ==============================
-// RPG Maps
+// RPG Maps & Poetry Queue
 // ==============================
 const rpgLobbies = new Map();
 const activeRpgGames = new Map();
+
+const poetryQueue = [];
+let isPlayingPoetry = false;
+
+async function processPoetryQueue() {
+    if (isPlayingPoetry || poetryQueue.length === 0) return;
+    isPlayingPoetry = true;
+    
+    const task = poetryQueue[0];
+    await playPoetryWithBeat(task.connection, task.text, () => {
+        poetryQueue.shift(); // إزالة الشعر اللي خلص من الطابور
+        isPlayingPoetry = false; // فتح المجال للي بعده
+        processPoetryQueue(); // تشغيل اللي بعده بالطابور
+    });
+}
 
 // ==============================
 // Utils
@@ -288,7 +319,7 @@ client.on("messageCreate", async (msg) => {
 
         const exactMessage = msg.content.trim();
 
-        // 🔥 نظام إلقاء الشعر عن طريق الشات المباشر
+        // 🔥 نظام إلقاء الشعر عن طريق الشات المباشر مع دعم الطابور
         const poetryRegex = /^(?:مودي\s+|حمودي\s+)?(قول شعر|سوي شعر|ألف شعر|الف شعر|عطني شعر|شعر)\s*(?:عن|في)?\s+(.+)/i;
         const poetryMatch = exactMessage.match(poetryRegex);
 
@@ -310,14 +341,14 @@ client.on("messageCreate", async (msg) => {
                 startListening(conn); 
             }
 
-            msg.reply(`جاري تأليف شعر عن **${topic}**... اسمعني بالروم 🎤`);
+            let queueStatus = isPlayingPoetry ? " (مُضاف للطابور ⏳)" : "";
+            msg.reply(`جاري تأليف شعر عن **${topic}**...${queueStatus} اسمعني بالروم 🎤`);
 
             const prompt = `أنت شاعر عربي فحل ومخضرم. اكتب 3 أو 4 أبيات شعرية قوية وموزونة باللغة العربية الفصحى عن: "${topic}".
 يجب أن تكون الأبيات مُشكّلة (بالحركات) لكي تُقرأ بشكل صحيح وواضح.
 بدون أي إيموجي، وبدون أي مقدمات أو شروحات، اكتب الأبيات الشعرية فقط.`;
 
             try {
-                // الشعر نستخدم فيه الموديل العادي بدون إنترنت لضمان الفصاحة
                 const chat = chatModel.startChat();
                 const res = await chat.sendMessage(prompt);
                 let poem = res.response.text().trim();
@@ -326,7 +357,10 @@ client.on("messageCreate", async (msg) => {
                 
                 let spokenPoem = "اسمع هالأبيات طال عمرك... \n" + poem.replace(/\n/g, " ،، \n");
                 
-                playPoetryWithBeat(conn, spokenPoem);
+                // إضافته للطابور بدلاً من التشغيل المباشر
+                poetryQueue.push({ connection: conn, text: spokenPoem });
+                processPoetryQueue();
+
             } catch (err) {
                 console.error("خطأ في تأليف الشعر:", err);
                 playAudio(conn, "والله القريحة الشعرية مقفلة الحين، المعذرة.");
@@ -377,7 +411,6 @@ client.on("messageCreate", async (msg) => {
         }
 
         const userId = msg.author.id;
-        // جلب السجل من المونقو
         const chatHistory = await getUserContext(userId);
 
         const saudiTime = new Date().toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" });
@@ -402,7 +435,6 @@ client.on("messageCreate", async (msg) => {
             }
         }
 
-        // 🔥 الاختيار الذكي للموديل (مع إرسال السجل الكامل دائماً)
         let activeModel = chatModel;
 
         if (dailySearchCount < SEARCH_LIMIT) {
@@ -414,7 +446,7 @@ client.on("messageCreate", async (msg) => {
         }
 
         const chat = activeModel.startChat({
-            history: chatHistory // رجعنا المونقو نفس قبل يرسل السجل كامل
+            history: chatHistory 
         });
 
         const result = await chat.sendMessage(parts);
@@ -441,12 +473,18 @@ client.on("messageCreate", async (msg) => {
             return;
         }
 
-        // حفظ المحادثة في المونقو
         await saveMessage(userId, 'user', cleanMessage);
         await saveMessage(userId, 'model', responseText);
 
         const chunks = splitMessage(responseText);
-        for (const chunk of chunks) await msg.channel.send(chunk);
+        for (let i = 0; i < chunks.length; i++) {
+            if (i === 0) {
+                // 🔥 الرد المباشر (Reply) للرسالة الأولى
+                await msg.reply(chunks[i]).catch(console.error);
+            } else {
+                await msg.channel.send(chunks[i]).catch(console.error);
+            }
+        }
 
     } catch (e) {
         console.error("Chat Error:", e);
@@ -610,7 +648,7 @@ function startListening(connection) {
 1. إياك كتابة مسودة تفكير أو تحليل للسياق. أكتب الرد النهائي مباشرة.
 2. رد عليه بلهجة سعودية طبيعية وعفوية بدون أي إيموجي.
 `;
-                // المحادثة الصوتية تعتمد على السجل كامل وبدون بحث إنترنت للسرعة القصوى
+                
                 const chat = chatModel.startChat({
                     history: chatHistory
                 });
@@ -643,7 +681,7 @@ function startListening(connection) {
 // ==============================
 // الشعر + الإيقاع (FFmpeg - حفظ مؤقت ثم تشغيل)
 // ==============================
-async function playPoetryWithBeat(connection, text) {
+async function playPoetryWithBeat(connection, text, onComplete) {
     try {
         console.log("⏳ [1] جاري تجهيز الإيقاع...");
         const beatsFolder = path.join(__dirname, 'beats');
@@ -652,7 +690,7 @@ async function playPoetryWithBeat(connection, text) {
         const beats = fs.readdirSync(beatsFolder).filter(f => f.endsWith('.mp3'));
         if (beats.length === 0) {
             console.log("⚠️ مجلد beats فاضي أو مافيه ملفات mp3، بشغل الصوت عادي بدون إيقاع.");
-            return playAudio(connection, text); 
+            return playAudio(connection, text, onComplete); 
         }
         
         // اختيار إيقاع عشوائي
@@ -673,7 +711,7 @@ async function playPoetryWithBeat(connection, text) {
 
         writeStream.on('finish', () => {
             console.log("✅ [3] تم حفظ الصوت، جاري الدمج مع الموسيقى...");            
-            // استخدام [0:a:0] لتجاهل أي صور ألبومات داخل الـ mp3 قد تخرب الدمج
+            
             const ffmpegArgs = [
                 '-i', randomBeat,               
                 '-i', tempTtsPath,              
@@ -685,37 +723,31 @@ async function playPoetryWithBeat(connection, text) {
 
             const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
 
-            let ffmpegLog = "";
-            ffmpegProcess.stderr.on('data', (data) => {
-                ffmpegLog += data.toString();
-            });
-
             ffmpegProcess.on('close', (code) => {
-                // التحقق من أن الملف المدموج سليم وحجمه أكبر من 0 بايت
                 let isMixValid = false;
                 if (fs.existsSync(tempMixPath)) {
                     const stats = fs.statSync(tempMixPath);
-                    if (stats.size > 1000) isMixValid = true; // لازم يكون أكبر من 1 كيلوبايت على الأقل
+                    if (stats.size > 1000) isMixValid = true; 
                 }
 
                 if (code !== 0 || !isMixValid) {
                     console.error(`❌ فشل الدمج السحري للموسيقى. جاري تشغيل الإلقاء الصافي كاحتياط.`);
-                    return playGeneratedAudio(connection, tempTtsPath, tempMixPath); 
+                    return playGeneratedAudio(connection, tempTtsPath, tempMixPath, onComplete); 
                 }
 
                 console.log("✅ [4] تم الدمج بنجاح، جاري التشغيل في الروم 🔊");
-                playGeneratedAudio(connection, tempMixPath, tempTtsPath);
+                playGeneratedAudio(connection, tempMixPath, tempTtsPath, onComplete);
             });
         });
 
     } catch (err) {
         console.error("❌ خطأ عام في دمج الصوت:", err);
-        playAudio(connection, text); 
+        playAudio(connection, text, onComplete); 
     }
 }
 
-// دالة مساعدة لتشغيل الملف الصوتي وحذفه بعد الانتهاء
-function playGeneratedAudio(connection, fileToPlay, otherFileToClean) {
+// دالة مساعدة لتشغيل الملف الصوتي وحذفه بعد الانتهاء ودعم الطابور
+function playGeneratedAudio(connection, fileToPlay, otherFileToClean, onComplete) {
     const resource = createAudioResource(fileToPlay, { inlineVolume: true });
     resource.volume.setVolume(1.0);
     const player = createAudioPlayer();
@@ -737,19 +769,21 @@ function playGeneratedAudio(connection, fileToPlay, otherFileToClean) {
             connection.subscribe(currentMusic);
             currentMusic.unpause();
         }
+        if (onComplete) onComplete();
     });
 
     player.on('error', (err) => {
         console.error("❌ خطأ أثناء التشغيل:", err);
         if (fs.existsSync(fileToPlay)) fs.unlinkSync(fileToPlay);
         if (fs.existsSync(otherFileToClean)) fs.unlinkSync(otherFileToClean);
+        if (onComplete) onComplete();
     });
 }
 
 // ==============================
-// TTS العادي (للسوالف)
+// TTS العادي (للسوالف) 
 // ==============================
-async function playAudio(connection, text) {
+async function playAudio(connection, text, onComplete) {
     try {
         const tts = new MsEdgeTTS();
         await tts.setMetadata('ar-SA-HamedNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
@@ -775,6 +809,7 @@ async function playAudio(connection, text) {
                 connection.subscribe(connection.currentMusicPlayer);
                 connection.currentMusicPlayer.unpause(); 
             }
+            if (onComplete) onComplete();
         });
 
         ttsPlayer.on('error', (err) => {
@@ -783,10 +818,12 @@ async function playAudio(connection, text) {
                 connection.subscribe(connection.currentMusicPlayer);
                 connection.currentMusicPlayer.unpause();
             }
+            if (onComplete) onComplete();
         });
 
     } catch (err) {
         console.error("TTS Error:", err);
+        if (onComplete) onComplete();
     }
 }
 
@@ -814,7 +851,6 @@ async function playMusic(connection, query) {
         console.error("Music Error:", err);
     }
 }
-
 
 // ==========================================
 // 🐉 نظام لعبة القصة (RPG) المدمج
