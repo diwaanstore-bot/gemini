@@ -33,7 +33,7 @@ const client = new Client({
 });
 
 // 🔥 إضافة الروم الجديد للقائمة المسموحة
-const ALLOWED_CHANNELS = ["1481435021385666661", "1418594734091272244"];
+const ALLOWED_CHANNELS = ["1481435021385666661", "1489281105403314267"];
 let currentMusicVolume = 0.5;
 const userCooldown = new Map();
 const COOLDOWN = 3000;
