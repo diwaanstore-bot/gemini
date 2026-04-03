@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
 const { joinVoiceChannel, getVoiceConnection, EndBehaviorType, createAudioPlayer, createAudioResource, StreamType, AudioPlayerStatus } = require('@discordjs/voice');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { MongoClient } = require('mongodb');
@@ -374,12 +374,12 @@ client.on("messageCreate", async (msg) => {
 
         const exactMessage = msg.content.trim();
 
-        // 🔥 1. ميزة توليد الصور (جديدة) 🔥
+// 🔥 1. ميزة توليد الصور (محدثة عشان تظهر في ديسكورد 100%) 🔥
         const imageRegex = /^(?:مودي\s+|حمودي\s+)?(?:سوي|ارسم|تخيل)\s+صورة\s+(.+)/i;
         const imageMatch = exactMessage.match(imageRegex);
         if (imageMatch) {
             const userPrompt = imageMatch[1].trim();
-            await msg.channel.sendTyping();
+            const loadingMsg = await msg.reply("⏳ جاري الرسم... عطني ثواني أضبطها لك!");
             try {
                 // ترجمة وتحسين الوصف عبر جيميناي
                 const translationPrompt = `Translate the following image description to a very detailed English artistic prompt for an AI image generator. Make it professional and high quality: "${userPrompt}"`;
@@ -388,30 +388,36 @@ client.on("messageCreate", async (msg) => {
                 const englishPrompt = res.response.text().trim();
 
                 const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(englishPrompt)}?width=1024&height=1024&nologo=true`;
+
+                // 🔥 الحل هنا: البوت يحمل الصورة أولاً كبيانات (Buffer) 🔥
+                const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+                const buffer = Buffer.from(response.data, 'binary');
+                const attachment = new AttachmentBuilder(buffer, { name: 'generated-image.jpg' });
+
                 const embed = new EmbedBuilder()
                     .setTitle("✨ رسمت لك اللي في بالك!")
                     .setDescription(`**الطلب:** ${userPrompt}`)
-                    .setImage(imageUrl)
+                    .setImage('attachment://generated-image.jpg') // ربط الصورة بالملف المرفق
                     .setColor("#00ffcc")
                     .setFooter({ text: "بواسطة حمودي المبدع" });
 
-                return msg.reply({ embeds: [embed] });
+                return loadingMsg.edit({ content: null, embeds: [embed], files: [attachment] });
             } catch (err) {
                 console.error("Image Gen Error:", err);
-                return msg.reply("❌ والله السيرفر حق الصور معلق، جرب بعد شوي.");
+                return loadingMsg.edit("❌ والله السيرفر حق الصور معلق أو الوصف مرفوض، جرب شيء ثاني.");
             }
         }
 
-        // 🔥 2. ميزة توليد الأغاني (جديدة) 🔥
+       // 🔥 2. ميزة توليد الأغاني (محدثة لتعمل مع مشروع Suno API المفتوح) 🔥
         const songRegex = /^(?:مودي\s+|حمودي\s+)?(?:سوي|ألف|لحن)\s+أغنية\s+(.+)/i;
         const songMatch = exactMessage.match(songRegex);
         if (songMatch) {
             const topic = songMatch[1].trim();
             const vc = msg.member.voice.channel;
-            const statusMsg = await msg.reply("⏳ جاري كتابة الكلمات وتلحين الأغنية... انتظرني شوي 🎤");
+            const statusMsg = await msg.reply("⏳ جاري كتابة الكلمات وتلحين الأغنية... بياخذ الموضوع دقيقة تقريباً 🎤");
 
             try {
-                // جيميناي يكتب الكلمات ويقرر الستايل الموسيقي
+                // 1. جيميناي يكتب الكلمات ويقرر الستايل
                 const songPrompt = `اكتب كلمات أغنية قصيرة (بيتين وقرار) بالعامية أو الفصحى عن "${topic}". 
                 اقترح "style" موسيقي بالإنجليزية (مثلاً: Sad Arabic Pop, Fast Rap, Khaleeji).
                 أرجع النتيجة بصيغة JSON فقط كالتالي:
@@ -423,16 +429,20 @@ client.on("messageCreate", async (msg) => {
                 const result = await chat.sendMessage(songPrompt);
                 const songData = JSON.parse(cleanJSON(result.response.text()));
 
-                // الإرسال لـ Suno API (استخدم الـ API المفضل لديك هنا)
-                const response = await axios.post('https://api.musichero.ai/v1/suno/generate', {
+                // 2. الإرسال لـ Suno API الخاص بك
+                // ملاحظة: تأكد من إضافة SUNO_API_URL في إعدادات Render
+                const sunoApiUrl = process.env.SUNO_API_URL; 
+
+                const response = await axios.post(`${sunoApiUrl}/api/custom_generate`, {
                     prompt: songData.lyrics,
-                    style: songData.style,
-                    title: topic
-                }, {
-                    headers: { 'Authorization': `Bearer ${process.env.MUSIC_HERO_API_KEY}` }
+                    tags: songData.style,
+                    title: topic,
+                    make_instrumental: false,
+                    wait_audio: true // ضروري جداً عشان البوت ينتظر لين تخلص الأغنية ويرجع الرابط
                 });
 
-                const songUrl = response.data.audio_url; 
+                // Suno API المفتوح يرجع مصفوفة فيها خيارين (أغنيتين)، نختار الأولى دايماً
+                const songUrl = response.data[0].audio_url; 
 
                 if (vc) {
                     let conn = getVoiceConnection(msg.guild.id);
@@ -442,13 +452,13 @@ client.on("messageCreate", async (msg) => {
                         startListening(conn); 
                     }
                     await statusMsg.edit("✅ الأغنية جاهزة! بشغلها لك الحين بالفويس.");
-                    playMusic(conn, songUrl); // تشغيلها في الروم المفتوح
+                    playMusic(conn, songUrl); // تشغيلها في الروم
                 } else {
                     await statusMsg.edit({ content: "✅ هذي أغنيتك يا فنان!", files: [songUrl] });
                 }
             } catch (err) {
                 console.error("Music Gen Error:", err);
-                await statusMsg.edit("❌ الملحن نايم الحين، أو تأكد من مفتاح الـ API حق الأغاني.");
+                await statusMsg.edit("❌ الملحن واجه مشكلة.. تأكد إن رابط Suno API شغال في إعدادات ريندر وما عليه ضغط.");
             }
             return;
         }
