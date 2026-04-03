@@ -10,6 +10,7 @@ const play = require('play-dl');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const axios = require('axios'); // 🔥 تمت إضافة Axios للتعامل مع الـ APIs
 require('dotenv').config();
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
@@ -57,6 +58,7 @@ const discordToken = process.env.DISCORD_TOKEN;
 const mongoClient = new MongoClient("mongodb+srv://Bots:Tl51R0bnMe1O4OeX@discordbot.gyvpxdk.mongodb.net/DiscordBots?retryWrites=true&w=majority&appName=DiscordBot");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const MUSIC_HERO_API_KEY = process.env.MUSIC_HERO_API_KEY; // 🔥 مفتاح الأغاني (تحتاج تضيفه في ملف .env)
 
 // ==============================
 // Search Limit & Cron Job
@@ -371,6 +373,85 @@ client.on("messageCreate", async (msg) => {
         if (msg.content.trim().startsWith("كملها")) return; 
 
         const exactMessage = msg.content.trim();
+
+        // 🔥 1. ميزة توليد الصور (جديدة) 🔥
+        const imageRegex = /^(?:مودي\s+|حمودي\s+)?(?:سوي|ارسم|تخيل)\s+صورة\s+(.+)/i;
+        const imageMatch = exactMessage.match(imageRegex);
+        if (imageMatch) {
+            const userPrompt = imageMatch[1].trim();
+            await msg.channel.sendTyping();
+            try {
+                // ترجمة وتحسين الوصف عبر جيميناي
+                const translationPrompt = `Translate the following image description to a very detailed English artistic prompt for an AI image generator. Make it professional and high quality: "${userPrompt}"`;
+                const chat = chatModel.startChat();
+                const res = await chat.sendMessage(translationPrompt);
+                const englishPrompt = res.response.text().trim();
+
+                const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(englishPrompt)}?width=1024&height=1024&nologo=true`;
+                const embed = new EmbedBuilder()
+                    .setTitle("✨ رسمت لك اللي في بالك!")
+                    .setDescription(`**الطلب:** ${userPrompt}`)
+                    .setImage(imageUrl)
+                    .setColor("#00ffcc")
+                    .setFooter({ text: "بواسطة حمودي المبدع" });
+
+                return msg.reply({ embeds: [embed] });
+            } catch (err) {
+                console.error("Image Gen Error:", err);
+                return msg.reply("❌ والله السيرفر حق الصور معلق، جرب بعد شوي.");
+            }
+        }
+
+        // 🔥 2. ميزة توليد الأغاني (جديدة) 🔥
+        const songRegex = /^(?:مودي\s+|حمودي\s+)?(?:سوي|ألف|لحن)\s+أغنية\s+(.+)/i;
+        const songMatch = exactMessage.match(songRegex);
+        if (songMatch) {
+            const topic = songMatch[1].trim();
+            const vc = msg.member.voice.channel;
+            const statusMsg = await msg.reply("⏳ جاري كتابة الكلمات وتلحين الأغنية... انتظرني شوي 🎤");
+
+            try {
+                // جيميناي يكتب الكلمات ويقرر الستايل الموسيقي
+                const songPrompt = `اكتب كلمات أغنية قصيرة (بيتين وقرار) بالعامية أو الفصحى عن "${topic}". 
+                اقترح "style" موسيقي بالإنجليزية (مثلاً: Sad Arabic Pop, Fast Rap, Khaleeji).
+                أرجع النتيجة بصيغة JSON فقط كالتالي:
+                \`\`\`json
+                {"lyrics": "الكلمات هنا", "style": "الستايل هنا"}
+                \`\`\``;
+                
+                const chat = chatModel.startChat();
+                const result = await chat.sendMessage(songPrompt);
+                const songData = JSON.parse(cleanJSON(result.response.text()));
+
+                // الإرسال لـ Suno API (استخدم الـ API المفضل لديك هنا)
+                const response = await axios.post('https://api.musichero.ai/v1/suno/generate', {
+                    prompt: songData.lyrics,
+                    style: songData.style,
+                    title: topic
+                }, {
+                    headers: { 'Authorization': `Bearer ${process.env.MUSIC_HERO_API_KEY}` }
+                });
+
+                const songUrl = response.data.audio_url; 
+
+                if (vc) {
+                    let conn = getVoiceConnection(msg.guild.id);
+                    if (!conn) {
+                        conn = joinVoiceChannel({ channelId: vc.id, guildId: vc.guild.id, adapterCreator: vc.guild.voiceAdapterCreator, selfDeaf: false });
+                        conn.continuousMode = true; 
+                        startListening(conn); 
+                    }
+                    await statusMsg.edit("✅ الأغنية جاهزة! بشغلها لك الحين بالفويس.");
+                    playMusic(conn, songUrl); // تشغيلها في الروم المفتوح
+                } else {
+                    await statusMsg.edit({ content: "✅ هذي أغنيتك يا فنان!", files: [songUrl] });
+                }
+            } catch (err) {
+                console.error("Music Gen Error:", err);
+                await statusMsg.edit("❌ الملحن نايم الحين، أو تأكد من مفتاح الـ API حق الأغاني.");
+            }
+            return;
+        }
 
         // 🛑 أوامر إيقاف/تشغيل القصة
         if (exactMessage === "وقف" || exactMessage === "قف" || exactMessage === "اسكت") {
@@ -857,7 +938,7 @@ async function playPoetryWithBeat(connection, text, onComplete) {
             console.log("✅ [3] تم حفظ الصوت، جاري الدمج مع الموسيقى...");            
             
             const ffmpegArgs = [
-                '-i', randomBeat,               
+                '-i', randomBeat,                
                 '-i', tempTtsPath,              
                 '-filter_complex', '[0:a:0]volume=0.15[bg];[1:a:0]volume=1.5[tts];[bg][tts]amix=inputs=2:duration=shortest[out]',
                 '-map', '[out]',
@@ -973,15 +1054,21 @@ async function playAudio(connection, text, onComplete) {
 // ==============================
 // Music
 // ==============================
-async function playMusic(connection, query) {
+async function playMusic(connection, queryOrUrl) {
     try {
-        const results = await play.search(query, { limit: 1, source: { soundcloud: "tracks" } });
-        if (!results.length) return;
-
-        const stream = await play.stream(results[0].url);
+        let streamUrl = queryOrUrl;
+        
+        // إذا كان رابط جاهز من الـ API (زي رابط Suno)
+        if (!queryOrUrl.startsWith('http')) {
+             const results = await play.search(queryOrUrl, { limit: 1, source: { soundcloud: "tracks" } });
+             if (!results.length) return;
+             const stream = await play.stream(results[0].url);
+             streamUrl = stream.stream;
+        }
 
         const player = createAudioPlayer();
-        const resource = createAudioResource(stream.stream, { inputType: stream.type, inlineVolume: true });
+        // تمرير الرابط المباشر أو الـ stream
+        const resource = createAudioResource(streamUrl, { inlineVolume: true });
 
         resource.volume.setVolume(currentMusicVolume);
 
