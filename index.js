@@ -121,12 +121,12 @@ const SEARCH_INSTRUCTION = SYSTEM_INSTRUCTION + `
 `;
 
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-3.1-flash-lite-preview", 
+    model: "gemini-2.5-flash-lite", 
     systemInstruction: SYSTEM_INSTRUCTION
 });
 
 const chatModelSearch = genAI.getGenerativeModel({
-    model: "gemini-3.1-flash-lite-preview", 
+    model: "gemini-2.5-flash-lite", 
     systemInstruction: SEARCH_INSTRUCTION,
     tools: [{ googleSearch: {} }] 
 });
