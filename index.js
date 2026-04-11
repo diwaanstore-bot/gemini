@@ -165,7 +165,9 @@ client.on("messageCreate", async (msg) => {
     await chatAI(msg, client, chatModel, chatModelSearch, dailySearchCount, SEARCH_LIMIT, historyCol);
 });
 async function startBot() {
-    const mongoClient = new MongoClient(process.env.MONGO_URI || "mongodb+srv://Bots:Tl51R0bnMe1O4OeX@discordbot.gyvpxdk.mongodb.net/DiscordBots?retryWrites=true&w=majority&appName=DiscordBot");
+    // 🔥 رجعناها زي كودك القديم بالضبط، رابط مباشر يتجاهل إعدادات ريندر الوهمية!
+    const mongoClient = new MongoClient("mongodb+srv://Bots:Tl51R0bnMe1O4OeX@discordbot.gyvpxdk.mongodb.net/DiscordBots?retryWrites=true&w=majority&appName=DiscordBot");
+    
     await mongoClient.connect();
     db = mongoClient.db("discord_bot_db");
     historyCol = db.collection("smart_chat_history");
@@ -174,5 +176,4 @@ async function startBot() {
     await client.login(process.env.DISCORD_TOKEN);
     console.log("Bot Ready 🚀 files are modular!");
 }
-
 startBot();
