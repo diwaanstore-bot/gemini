@@ -92,9 +92,61 @@ const SEARCH_INSTRUCTION = SYSTEM_INSTRUCTION + `
 يمنع منعاً باتاً التخمين أو تأليف الإجابات (الهلوسة). إذا طُلب منك كلمات أغنية، أسعار، أخبار، أو معلومات دقيقة، ابحث عنها فوراً وأعطِ الإجابة الدقيقة المستخرجة من الإنترنت.
 `;
 
+// ==============================
+// نظام المودل الاحتياطي (Fallback System)
+// ==============================
+function createModelWithFallback(genAI, primaryConfig, fallbackConfig) {
+    const primaryModel = genAI.getGenerativeModel(primaryConfig);
+    const fallbackModel = genAI.getGenerativeModel(fallbackConfig);
+
+    // 1. تغليف دالة التوليد المباشر (generateContent)
+    const originalGenerateContent = primaryModel.generateContent.bind(primaryModel);
+    primaryModel.generateContent = async function(...args) {
+        try {
+            return await originalGenerateContent(...args);
+        } catch (error) {
+            console.error(`⚠️ [تحويل للمودل الاحتياطي] المودل الأساسي فشل: ${error.message}`);
+            return await fallbackModel.generateContent(...args);
+        }
+    };
+
+    // 2. تغليف دالة المحادثات المستمرة (startChat) عشان المودل الاحتياطي يكمل على نفس السجل
+    const originalStartChat = primaryModel.startChat.bind(primaryModel);
+    primaryModel.startChat = function(chatParams) {
+        const chatSession = originalStartChat(chatParams);
+        const originalSendMessage = chatSession.sendMessage.bind(chatSession);
+
+        chatSession.sendMessage = async function(...args) {
+            try {
+                return await originalSendMessage(...args);
+            } catch (error) {
+                console.error(`⚠️ [تحويل للمودل الاحتياطي - محادثة] المودل الأساسي فشل: ${error.message}`);
+                // إنشاء جلسة جديدة بالمودل الاحتياطي مع الحفاظ على نفس سجل المحادثة (history)
+                const fallbackChat = fallbackModel.startChat(chatParams);
+                return await fallbackChat.sendMessage(...args);
+            }
+        };
+        return chatSession;
+    };
+
+    return primaryModel;
+}
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const chatModel = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview", systemInstruction: SYSTEM_INSTRUCTION });
-const chatModelSearch = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview", systemInstruction: SEARCH_INSTRUCTION, tools: [{ googleSearch: {} }] });
+
+// إعداد المودل الأساسي (للمحادثات العادية)
+const chatModel = createModelWithFallback(
+    genAI,
+    { model: "gemini-3.1-flash-lite-preview", systemInstruction: SYSTEM_INSTRUCTION },
+    { model: "gemini-2.5-flash-lite", systemInstruction: SYSTEM_INSTRUCTION }
+);
+
+// إعداد المودل الخاص بالبحث
+const chatModelSearch = createModelWithFallback(
+    genAI,
+    { model: "gemini-3.1-flash-lite-preview", systemInstruction: SEARCH_INSTRUCTION, tools: [{ googleSearch: {} }] },
+    { model: "gemini-2.5-flash-lite", systemInstruction: SEARCH_INSTRUCTION, tools: [{ googleSearch: {} }] }
+);
 
 let db, historyCol;
 
