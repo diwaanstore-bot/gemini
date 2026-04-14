@@ -9,8 +9,8 @@ const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const poetryQueue = [];
 let isPlayingPoetry = false;
 
-// قائمة بأسماء الشلة عشان جيميناي يختار منها
-const FRIENDS_NAMES = ["نايل", "خالد", "اريام", "لافندر", "سويده", "جبنة",, "ريان", "هطيف", "فاطم", "أروى", "حمدان"];
+// قائمة بأسماء الشلة عشان جيميناي يختار منها (تم تعديل الفاصلة الزايدة)
+const FRIENDS_NAMES = ["نايل", "خالد", "اريام", "لافندر", "سويده", "جبنة", "ريان", "هطيف", "فاطم", "أروى", "حمدان"];
 
 // قائمة الأصوات العربية من مايكروسوفت (للشخصيات)
 const TTS_VOICES = [
@@ -69,18 +69,22 @@ module.exports = {
 
                 const randomPost = posts[Math.floor(Math.random() * posts.length)];
                 
-                // البرومبت السحري لتحويل القصة إلى حوارات بأسماء الشلة
-                const prompt = `أنت راوي قصص سعودي محترف. قم بترجمة القصة التالية للعربية بأسلوب ممتع.
-تعليمات صارمة جداً:
-1. استبدل أي أسماء أجنبية في القصة بأسماء عشوائية من هذه القائمة فقط: ${FRIENDS_NAMES.join("، ")}. استخدم نفس الأسماء المختارة طوال القصة.
-2. قسّم القصة إلى سرد (الراوي) وحوارات بين الشخصيات.
-3. يجب أن يكون الرد عبارة عن مصفوفة JSON فقط لا غير، بدون أي كلام إضافي وبدون علامات الـ markdown.
+                // البرومبت الصارم الجديد (دمجنا العنوان هنا عشان يترجمه ولا يقراه بالإنجليزي)
+                const prompt = `أنت راوي قصص سعودي محترف. قم بترجمة عنوان القصة ونصها للعربية السعودية بأسلوب ممتع كمسلسل إذاعي.
+تعليمات صارمة جداً (يمنع منعاً باتاً قراءتها أو إضافتها في الرد):
+1. استبدل أي أسماء أجنبية بأسماء عشوائية من هذه القائمة فقط: ${FRIENDS_NAMES.join("، ")}. استخدم نفس الأسماء طوال القصة.
+2. قسم القصة إلى سرد (الراوي) وحوارات بين الشخصيات.
+3. الرد يجب أن يكون مصفوفة JSON فقط لا غير، تبدأ بـ [ وتنتهي بـ ]. يمنع كتابة أي نص قبل أو بعد الـ JSON. يمنع كتابة مقدمات مثل "إليك القصة".
+
 هيكل الـ JSON المطلوب:
 [
-  {"character": "الراوي", "text": "نص السرد هنا"},
-  {"character": "نايل", "text": "نص الحوار هنا"}
+  {"character": "الراوي", "text": "عنوان القصة: [ترجمة العنوان هنا]"},
+  {"character": "الراوي", "text": "نص السرد هنا..."},
+  {"character": "نايل", "text": "نص الحوار هنا..."}
 ]
-القصة:
+
+العنوان الأجنبي: ${randomPost.data.title}
+القصة الأجنبية:
 ${randomPost.data.selftext.substring(0, 3000)}`;
 
                 const chat = chatModel.startChat();
@@ -88,7 +92,6 @@ ${randomPost.data.selftext.substring(0, 3000)}`;
                 
                 let rawResponse = translateRes.response.text().trim();
                 
-                // استخراج الـ JSON في حال جيميناي حط علامات ```json
                 let jsonStr = rawResponse;
                 const jsonMatch = rawResponse.match(/\[[\s\S]*\]/);
                 if (jsonMatch) jsonStr = jsonMatch[0];
@@ -97,16 +100,16 @@ ${randomPost.data.selftext.substring(0, 3000)}`;
                 try {
                     storyBlocks = JSON.parse(jsonStr);
                 } catch (parseError) {
-                    console.error("JSON Parse Error, fallback to normal text", parseError);
-                    // نظام حماية لو جيميناي جاب العيد في الـ JSON، يقراها كراوي بس
-                    storyBlocks = [{"character": "الراوي", "text": rawResponse.replace(/[\u{1F600}-\u{1F6FF}]/gu, '')}];
+                    console.error("JSON Parse Error:", parseError);
+                    // نظام حماية: لو جيميناي خربط وما جاب JSON، البوت ما راح يقرا التعليمات، بيعتذر بس!
+                    storyBlocks = [{"character": "الراوي", "text": "عذراً يا شباب، الراوي ضيع الأوراق والقصة انحاست. اطلبوا قصة ثانية."}];
                 }
 
-                // تجهيز الطابور وتصفير خريطة الأصوات للقصة الجديدة
                 storyPlayerState.characterVoicesMap = {};
                 storyPlayerState.voiceIndex = 0;
+                
+                // شلنا العنوان الإنجليزي من هنا لأن جيميناي صار يترجمه في أول بلوك
                 storyPlayerState.queue = [
-                    {character: "الراوي", text: `اسمعوا هالقصة... بعنوان: ${randomPost.data.title}`},
                     ...storyBlocks,
                     {character: "الراوي", text: "انتهت القصة، أتمنى تكون عجبتكم."}
                 ];
@@ -156,19 +159,16 @@ ${randomPost.data.selftext.substring(0, 3000)}`;
             let charName = task.character || "الراوي";
             let rawText = task.text || "";
 
-            // تنظيف النص بالكامل من الفواصل والنقاط وأي علامات توقف عشان ما يقطع الصوت
+            // تنظيف النص بالكامل من الفواصل والنقاط وأي علامات توقف 
             let cleanText = rawText.replace(/[.,،؛:؟!?"'\\-]/g, ' ').replace(/[\u{1F600}-\u{1F6FF}]/gu, '').trim();
             if (!cleanText) {
-                // إذا المقطع طلع فارغ بعد التنظيف، نتخطاه ونروح للي بعده
                 return this.processStoryQueue(state);
             }
 
-            // تحديد الصوت بناءً على الشخصية
-            let selectedVoice = 'ar-SA-HamedNeural'; // الصوت الأساسي للراوي
+            let selectedVoice = 'ar-SA-HamedNeural'; 
             
             if (charName !== "الراوي") {
                 if (!state.characterVoicesMap[charName]) {
-                    // إذا شخصية جديدة، نعطيها صوت من القائمة بالترتيب
                     state.characterVoicesMap[charName] = TTS_VOICES[state.voiceIndex % TTS_VOICES.length];
                     state.voiceIndex++;
                 }
@@ -179,9 +179,25 @@ ${randomPost.data.selftext.substring(0, 3000)}`;
             await tts.setMetadata(selectedVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
             const { audioStream } = tts.toStream(cleanText);
             
+            // 🔥 الحل السحري لتبطيء الصوت: استخدام FFmpeg لتقليل السرعة بنسبة 15% (0.85)
+            const ffmpegProcess = spawn(ffmpegPath, [
+                '-i', 'pipe:0',             // استلام الصوت من الـ TTS
+                '-filter:a', 'atempo=0.85', // إبطاء الصوت بنسبة 15% عشان يكون أروق
+                '-f', 'mp3',                // تحويله لصيغة mp3
+                'pipe:1'                    // إرساله للمخرج
+            ]);
+
+            // تمرير الصوت عبر فلتر التبطيء
+            audioStream.pipe(ffmpegProcess.stdin);
+
+            ffmpegProcess.on('error', (err) => {
+                console.error("FFmpeg Story Slowdown Error:", err);
+            });
+
             const player = createAudioPlayer();
             state.player = player;
-            const resource = createAudioResource(audioStream, { inputType: StreamType.Arbitrary, inlineVolume: true });
+            // قراءة الصوت بعد التبطيء من FFmpeg
+            const resource = createAudioResource(ffmpegProcess.stdout, { inputType: StreamType.Arbitrary, inlineVolume: true });
             
             if (state.connection) {
                 const currentMusic = state.connection.currentMusicPlayer;
