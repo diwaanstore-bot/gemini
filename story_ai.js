@@ -9,6 +9,20 @@ const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const poetryQueue = [];
 let isPlayingPoetry = false;
 
+// قائمة بأسماء الشلة عشان جيميناي يختار منها
+const FRIENDS_NAMES = ["نايل", "خالد", "اريام", "لافندر", "سويده", "جبنة",, "ريان", "هطيف", "فاطم", "أروى", "حمدان"];
+
+// قائمة الأصوات العربية من مايكروسوفت (للشخصيات)
+const TTS_VOICES = [
+    'ar-AE-HamdanNeural', 
+    'ar-EG-ShakirNeural', 
+    'ar-SA-ZariyahNeural', 
+    'ar-QA-MoazNeural', 
+    'ar-EG-SalmaNeural',
+    'ar-AE-FatimaNeural',
+    'ar-BH-AliNeural'
+];
+
 module.exports = {
     handleStoryCommands: async function(msg, exactMessage, chatModel, storyPlayerState, startListeningFn) {
         if (exactMessage === "وقف" || exactMessage === "قف" || exactMessage === "اسكت") {
@@ -40,7 +54,7 @@ module.exports = {
             }
             
             storyPlayerState.connection = conn;
-            msg.reply(`📖 جاري البحث عن قصة **${requestedGenre}** حقيقية وترجمتها... جهزوا الشاي ☕`);
+            msg.reply(`📖 جاري البحث عن قصة **${requestedGenre}** حقيقية وترجمتها وتوزيع الأدوار... جهزوا الشاي ☕`);
 
             try {
                 let subreddit = "shortstories";
@@ -54,14 +68,50 @@ module.exports = {
                 if (posts.length === 0) throw new Error("لا توجد قصص");
 
                 const randomPost = posts[Math.floor(Math.random() * posts.length)];
+                
+                // البرومبت السحري لتحويل القصة إلى حوارات بأسماء الشلة
+                const prompt = `أنت راوي قصص سعودي محترف. قم بترجمة القصة التالية للعربية بأسلوب ممتع.
+تعليمات صارمة جداً:
+1. استبدل أي أسماء أجنبية في القصة بأسماء عشوائية من هذه القائمة فقط: ${FRIENDS_NAMES.join("، ")}. استخدم نفس الأسماء المختارة طوال القصة.
+2. قسّم القصة إلى سرد (الراوي) وحوارات بين الشخصيات.
+3. يجب أن يكون الرد عبارة عن مصفوفة JSON فقط لا غير، بدون أي كلام إضافي وبدون علامات الـ markdown.
+هيكل الـ JSON المطلوب:
+[
+  {"character": "الراوي", "text": "نص السرد هنا"},
+  {"character": "نايل", "text": "نص الحوار هنا"}
+]
+القصة:
+${randomPost.data.selftext.substring(0, 3000)}`;
+
                 const chat = chatModel.startChat();
-                const translateRes = await chat.sendMessage(`أنت راوي قصص سعودي محترف. ترجم ونظف القصة التالية للعربية الفصحى أو السعودية لتكون ممتعة، بدون إضافات:\n${randomPost.data.selftext.substring(0, 3000)}`);
+                const translateRes = await chat.sendMessage(prompt);
                 
-                let arabicStory = translateRes.response.text().trim().replace(/[\u{1F600}-\u{1F6FF}]/gu, '');
-                const chunks = arabicStory.match(/.{1,600}(?:\s|$)/g) || [arabicStory];
+                let rawResponse = translateRes.response.text().trim();
                 
-                storyPlayerState.queue = [`اسمعوا هالقصة... بعنوان: ${randomPost.data.title}`, ...chunks, "انتهت القصة، أتمنى تكون عجبتكم."];
-                msg.channel.send(`✅ حصلت القصة وتمت الترجمة، بدأت أقراها لكم في الفويس!`);
+                // استخراج الـ JSON في حال جيميناي حط علامات ```json
+                let jsonStr = rawResponse;
+                const jsonMatch = rawResponse.match(/\[[\s\S]*\]/);
+                if (jsonMatch) jsonStr = jsonMatch[0];
+
+                let storyBlocks = [];
+                try {
+                    storyBlocks = JSON.parse(jsonStr);
+                } catch (parseError) {
+                    console.error("JSON Parse Error, fallback to normal text", parseError);
+                    // نظام حماية لو جيميناي جاب العيد في الـ JSON، يقراها كراوي بس
+                    storyBlocks = [{"character": "الراوي", "text": rawResponse.replace(/[\u{1F600}-\u{1F6FF}]/gu, '')}];
+                }
+
+                // تجهيز الطابور وتصفير خريطة الأصوات للقصة الجديدة
+                storyPlayerState.characterVoicesMap = {};
+                storyPlayerState.voiceIndex = 0;
+                storyPlayerState.queue = [
+                    {character: "الراوي", text: `اسمعوا هالقصة... بعنوان: ${randomPost.data.title}`},
+                    ...storyBlocks,
+                    {character: "الراوي", text: "انتهت القصة، أتمنى تكون عجبتكم."}
+                ];
+                
+                msg.channel.send(`✅ حصلت القصة وتمت دبلجتها بأصوات الشباب، بدأت أقراها لكم في الفويس!`);
                 
                 if (!storyPlayerState.isPlaying) this.processStoryQueue(storyPlayerState);
             } catch (err) {
@@ -98,13 +148,36 @@ module.exports = {
     },
 
     processStoryQueue: async function(state) {
-        if (state.queue.length === 0) { state.isPlaying = false; return; }
+        if (!state.queue || state.queue.length === 0) { state.isPlaying = false; return; }
         state.isPlaying = true;
         
         try {
+            const task = state.queue.shift();
+            let charName = task.character || "الراوي";
+            let rawText = task.text || "";
+
+            // تنظيف النص بالكامل من الفواصل والنقاط وأي علامات توقف عشان ما يقطع الصوت
+            let cleanText = rawText.replace(/[.,،؛:؟!?"'\\-]/g, ' ').replace(/[\u{1F600}-\u{1F6FF}]/gu, '').trim();
+            if (!cleanText) {
+                // إذا المقطع طلع فارغ بعد التنظيف، نتخطاه ونروح للي بعده
+                return this.processStoryQueue(state);
+            }
+
+            // تحديد الصوت بناءً على الشخصية
+            let selectedVoice = 'ar-SA-HamedNeural'; // الصوت الأساسي للراوي
+            
+            if (charName !== "الراوي") {
+                if (!state.characterVoicesMap[charName]) {
+                    // إذا شخصية جديدة، نعطيها صوت من القائمة بالترتيب
+                    state.characterVoicesMap[charName] = TTS_VOICES[state.voiceIndex % TTS_VOICES.length];
+                    state.voiceIndex++;
+                }
+                selectedVoice = state.characterVoicesMap[charName];
+            }
+
             const tts = new MsEdgeTTS();
-            await tts.setMetadata('ar-SA-HamedNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-            const { audioStream } = tts.toStream(state.queue.shift());
+            await tts.setMetadata(selectedVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+            const { audioStream } = tts.toStream(cleanText);
             
             const player = createAudioPlayer();
             state.player = player;
@@ -119,7 +192,10 @@ module.exports = {
                 player.on(AudioPlayerStatus.Idle, () => this.processStoryQueue(state));
                 player.on('error', () => this.processStoryQueue(state));
             }
-        } catch (err) { this.processStoryQueue(state); }
+        } catch (err) { 
+            console.error("TTS Playback Error:", err);
+            this.processStoryQueue(state); 
+        }
     },
 
     processPoetryQueue: async function() {
@@ -132,7 +208,6 @@ module.exports = {
         const beats = fs.readdirSync(beatsFolder).filter(f => f.endsWith('.mp3'));
         
         if(beats.length === 0) {
-           // تشغيل بدون ايقاع
            const { playAudio } = require('./voice_ai');
            playAudio(task.connection, task.text, () => { poetryQueue.shift(); isPlayingPoetry = false; this.processPoetryQueue(); });
            return;
